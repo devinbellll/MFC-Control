@@ -27,7 +27,7 @@ function test_estimators()
     %    Plant: yddot = -a1*yd - a0*y + b*u,  alpha = b (matched).
     % ---------------------------------------------------------------------
     a0 = 1; a1 = 1.4; b = 2; alpha = 2; ref = 1;
-    c = second_order_F_estimator('Ts',Ts,'T',0.1,'alpha',alpha, ...
+    c = second_order_F_estimator('Ts',Ts,'FFilter',100,'alpha',alpha, ...
                                  'WFilter',10,'Kp',25,'Kd',10,'Ki',20);
     [t,y,~,F] = sim2(c, a0,a1,b, Ts, 6, @(tt) ref*(tt>=0.2));
     fin = t > 5;
@@ -44,7 +44,7 @@ function test_estimators()
     %    F-cancellation is REQUIRED for stability. yddot = +4*y + 2*u.
     %    Correct (+60/T^5): bounded.  Bug (-60/T^5): diverges.
     % ---------------------------------------------------------------------
-    cu = second_order_F_estimator('Ts',Ts,'T',0.1,'alpha',2, ...
+    cu = second_order_F_estimator('Ts',Ts,'FFilter',100,'alpha',2, ...
                                   'WFilter',10,'Kp',1,'Kd',2,'Ki',0);
     [tu,yu] = sim2(cu, -4,0,2, Ts, 6, @(tt) 1.0*(tt>=0.2));
     check(sprintf('2nd: unstable plant stays bounded (max|y|=%.3g)',max(abs(yu))), ...
@@ -55,7 +55,7 @@ function test_estimators()
     %    Plant: ydot = -a0*y + b*u,  alpha = b.  Steady F = -alpha*u_ss.
     % ---------------------------------------------------------------------
     a0 = 1; b = 2; alpha = 2; ref = 1;
-    c1 = first_order_F_estimator('Ts',Ts,'T',0.1,'alpha',alpha, ...
+    c1 = first_order_F_estimator('Ts',Ts,'FFilter',100,'alpha',alpha, ...
                                  'WFilter',10,'Kp',5,'Ki',5);
     [t1,y1,~,F1] = sim1(c1, a0,b, Ts, 6, @(tt) ref*(tt>=0.2));
     fin1 = t1 > 5;

@@ -21,7 +21,8 @@ classdef first_order_F_estimator < matlab.System
     %   Estimator (Eq. 11), with sigma in [0, T] the window-local time:
     %       F = -(6/T^3) * ∫_0^T [ (T - 2*σ)*y_m(σ)
     %                              + alpha*σ*(T-σ) * u(σ) ] dσ
-    %   evaluated by the trapezoidal rule over the (N+1)-sample window.
+    %   evaluated by composite SIMPSON quadrature over the window (interval count
+    %   forced even, realized window N*Ts), matching second_order_F_estimator.
     %
     %   Ultra-local model: dot_y = F + alpha*u,   error e = Ym - yref_filter.
     %
@@ -40,7 +41,8 @@ classdef first_order_F_estimator < matlab.System
 
     properties (Nontunable)
         Ts       = 0.01   % sample time; also fixes the block's discrete rate
-        T        = 0.1    % estimator sliding-window length (s); sets buffer size
+        FFilter  = 10     % estimator window length in SAMPLES (window T = FFilter*Ts);
+                          % same knob/units as mfc_siso_decoupled.FFilter
     end
 
     properties (Nontunable, Logical)
@@ -59,10 +61,11 @@ classdef first_order_F_estimator < matlab.System
 
     properties (Access = private)
         % Pre-computed window constants (set once in setupImpl).
-        N                % number of intervals: window holds N+1 samples
-        sigma            % [(N+1)x1] window-local time nodes, 0 .. T
-        ym_kernel        % [(N+1)x1] constant measurement kernel (T - 2*sigma)
-        w                % [(N+1)x1] trapezoidal weights
+        N                % number of intervals (forced EVEN for Simpson): N+1 samples
+        Tw               % realized window length = N*Ts (>= T, within one Ts)
+        sigma            % [(N+1)x1] window-local time nodes, 0 .. Tw
+        ym_kernel        % [(N+1)x1] constant measurement kernel (Tw - 2*sigma)
+        w                % [(N+1)x1] composite-Simpson weights (1 4 2 .. 4 1)
     end
 
     methods
@@ -76,15 +79,19 @@ classdef first_order_F_estimator < matlab.System
             % One-time window quadrature constants. The y_m kernel and nodes
             % depend only on the (nontunable) window T/Ts; the u kernel depends
             % on the tunable alpha and is rebuilt each step.
-            obj.N     = round(obj.T / obj.Ts);
-            obj.sigma = (0:obj.N).' * obj.Ts;             % [(N+1)x1], 0 .. T
-            obj.ym_kernel = obj.T - 2*obj.sigma;
-            wv = ones(obj.N+1, 1);  wv(1) = 0.5;  wv(end) = 0.5;
+            % Composite SIMPSON quadrature (even interval count, realized window
+            % Tw = N*Ts) for consistency with second_order_F_estimator.
+            obj.N  = obj.FFilter;                         % window length in samples
+            obj.N  = obj.N + mod(obj.N, 2);               % force even
+            obj.Tw = obj.N * obj.Ts;
+            obj.sigma = (0:obj.N).' * obj.Ts;             % [(N+1)x1], 0 .. Tw
+            obj.ym_kernel = obj.Tw - 2*obj.sigma;
+            wv = ones(obj.N+1, 1);  wv(2:2:end-1) = 4;  wv(3:2:end-1) = 2;
             obj.w = wv;
         end
 
         function [U, F, yref_filter, err] = stepImpl(obj, Yref, Ym, t)
-            Ts = obj.Ts;  WF = obj.WFilter;  al = obj.alpha;  T = obj.T;
+            Ts = obj.Ts;  WF = obj.WFilter;  al = obj.alpha;
 
             % 1) First-order reference pre-filter (tau = WF*Ts), unity DC gain.
             yref_filter = (Yref + WF*obj.yref_km1) / (WF + 1);
@@ -98,15 +105,16 @@ classdef first_order_F_estimator < matlab.System
             % 2) PURE plant F via sliding-window quadrature (Eq. 11), (Ym, U)
             %    only -- no error term. u uses the previously applied U_km1
             %    (the current U is not known yet), as in the algebraic variants.
+            Tw   = obj.Tw;                        % realized (even-interval) window
             ybuf = [obj.y_buf(2:end); Ym];
             ubuf = [obj.u_buf(2:end); obj.U_km1];
 
-            u_kernel  = al .* obj.sigma .* (T - obj.sigma);
+            u_kernel  = al .* obj.sigma .* (Tw - obj.sigma);
             integrand = obj.ym_kernel .* ybuf + u_kernel .* ubuf;
 
             F = 0;
-            if t > T                              % hold until the window fills
-                F = (-6 / T^3) * Ts * sum(obj.w .* integrand);
+            if t > Tw                             % hold until the window fills
+                F = (-6 / Tw^3) * (Ts/3) * sum(obj.w .* integrand);   % Simpson
             end
 
             % 3) Explicit iP(I) feedback on the error (no estimator lag).
@@ -131,7 +139,7 @@ classdef first_order_F_estimator < matlab.System
         end
 
         function resetImpl(obj)
-            n = round(obj.T / obj.Ts);
+            n = obj.FFilter;  n = n + mod(n, 2);   % window samples, even (Simpson)
             obj.yref_km1 = 0;
             obj.y_buf    = zeros(n+1, 1);
             obj.u_buf    = zeros(n+1, 1);
@@ -145,7 +153,8 @@ classdef first_order_F_estimator < matlab.System
             % double.
             switch name
                 case {'y_buf', 'u_buf'}
-                    sz = [round(obj.T / obj.Ts) + 1, 1];
+                    n = obj.FFilter;  n = n + mod(n, 2);
+                    sz = [n + 1, 1];
                 otherwise
                     sz = [1 1];
             end

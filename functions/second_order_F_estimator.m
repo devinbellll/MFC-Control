@@ -9,8 +9,9 @@ classdef second_order_F_estimator < matlab.System
     %   separate:
     %
     %     (a) F is estimated from the PURE plant using ONLY (Ym, U, alpha) over
-    %         a window of length T. The error never enters the estimator, so F
-    %         is the TRUE plant lumped dynamics ddot_y - alpha*u.
+    %         a window of FFilter samples (length T = FFilter*Ts). The error
+    %         never enters the estimator, so F is the TRUE plant lumped dynamics
+    %         ddot_y - alpha*u.
     %     (b) the stabilizing feedback is an EXPLICIT iPD(I) law on the error:
     %
     %       u = ( -F + ddot_yref ) / alpha  -  ( Kd*dot_e + Kp*e + Ki*∫e ) / alpha
@@ -18,7 +19,11 @@ classdef second_order_F_estimator < matlab.System
     %   Estimator (Eq. 16), with sigma in [0, T] the window-local time:
     %       F = (60/T^5) * ∫_0^T [ (T^2 - 6*T*σ + 6*σ^2)*y_m(σ)
     %                              - (alpha/2)*σ^2*(T-σ)^2 * u(σ) ] dσ
-    %   evaluated by the trapezoidal rule over the (N+1)-sample window.
+    %   evaluated by composite SIMPSON quadrature over the window. (Trapezoidal
+    %   is NOT usable here: the 60/T^5 prefactor amplifies its O(Ts^2/T^4)
+    %   leakage to ~60x error at Ts=0.01, T=0.1. Simpson is exact through cubics,
+    %   so the estimate matches mfc_siso_decoupled. The interval count is forced
+    %   even and the realized window is N*Ts.)
     %
     %   Ultra-local model: ddot_y = F + alpha*u,   error e = Ym - yref_filter.
     %   With Kd = 2*p, Kp = p^2, Ki = 0 the ideal closed loop is (s + p)^2, the
@@ -40,7 +45,8 @@ classdef second_order_F_estimator < matlab.System
 
     properties (Nontunable)
         Ts       = 0.01   % sample time; also fixes the block's discrete rate
-        T        = 0.1    % estimator sliding-window length (s); sets buffer size
+        FFilter  = 10     % estimator window length in SAMPLES (window T = FFilter*Ts);
+                          % same knob/units as mfc_siso_decoupled.FFilter
     end
 
     properties (Nontunable, Logical)
@@ -60,10 +66,11 @@ classdef second_order_F_estimator < matlab.System
 
     properties (Access = private)
         % Pre-computed window constants (set once in setupImpl).
-        N                % number of intervals: window holds N+1 samples
-        sigma            % [(N+1)x1] window-local time nodes, 0 .. T
+        N                % number of intervals (forced EVEN for Simpson): N+1 samples
+        Tw               % realized window length = N*Ts (>= T, within one Ts)
+        sigma            % [(N+1)x1] window-local time nodes, 0 .. Tw
         ym_kernel        % [(N+1)x1] constant measurement kernel
-        w                % [(N+1)x1] trapezoidal weights
+        w                % [(N+1)x1] composite-Simpson weights (1 4 2 .. 4 1)
     end
 
     methods
@@ -77,15 +84,26 @@ classdef second_order_F_estimator < matlab.System
             % One-time window quadrature constants. The y_m kernel and nodes
             % depend only on the (nontunable) window T/Ts; the u kernel depends
             % on the tunable alpha and is rebuilt each step.
-            obj.N     = round(obj.T / obj.Ts);
-            obj.sigma = (0:obj.N).' * obj.Ts;             % [(N+1)x1], 0 .. T
-            obj.ym_kernel = obj.T^2 - 6*obj.T*obj.sigma + 6*obj.sigma.^2;
-            wv = ones(obj.N+1, 1);  wv(1) = 0.5;  wv(end) = 0.5;
+            %
+            % Composite SIMPSON quadrature (not trapezoidal): the 60/T^5
+            % prefactor amplifies any quadrature error enormously, and the
+            % trapezoidal rule leaves an O(Ts^2/T^4) leakage that makes the
+            % estimate unusable at practical Ts (e.g. ~60x error at Ts=0.01,
+            % T=0.1). Simpson is exact through cubics, so the constant/linear
+            % leakage vanishes and the estimate matches the algebraic variant
+            % (mfc_siso_decoupled). Simpson needs an EVEN interval count, so N
+            % is rounded up to even and the realized window is Tw = N*Ts.
+            obj.N  = obj.FFilter;                         % window length in samples
+            obj.N  = obj.N + mod(obj.N, 2);               % force even
+            obj.Tw = obj.N * obj.Ts;
+            obj.sigma = (0:obj.N).' * obj.Ts;             % [(N+1)x1], 0 .. Tw
+            obj.ym_kernel = obj.Tw^2 - 6*obj.Tw*obj.sigma + 6*obj.sigma.^2;
+            wv = ones(obj.N+1, 1);  wv(2:2:end-1) = 4;  wv(3:2:end-1) = 2;
             obj.w = wv;
         end
 
         function [U, F, yref_filter, err] = stepImpl(obj, Yref, Ym, t)
-            Ts = obj.Ts;  WF = obj.WFilter;  al = obj.alpha;  T = obj.T;
+            Ts = obj.Ts;  WF = obj.WFilter;  al = obj.alpha;
 
             % 1) Reference pre-filter (smooth, twice-differentiable trajectory).
             yref_filter = (Yref + (2*WF^2 + 2*WF)*obj.yref_km1 + (-WF^2)*obj.yref_km2) ...
@@ -100,15 +118,16 @@ classdef second_order_F_estimator < matlab.System
             % 2) PURE plant F via sliding-window quadrature (Eq. 16), (Ym, U)
             %    only -- no error term. u uses the previously applied U_km1
             %    (the current U is not known yet), as in the algebraic variants.
+            Tw   = obj.Tw;                        % realized (even-interval) window
             ybuf = [obj.y_buf(2:end); Ym];
             ubuf = [obj.u_buf(2:end); obj.U_km1];
 
-            u_kernel  = (al/2) .* obj.sigma.^2 .* (T - obj.sigma).^2;
+            u_kernel  = (al/2) .* obj.sigma.^2 .* (Tw - obj.sigma).^2;
             integrand = obj.ym_kernel .* ybuf - u_kernel .* ubuf;
 
             F = 0;
-            if t > T                              % hold until the window fills
-                F = (60 / T^5) * Ts * sum(obj.w .* integrand);
+            if t > Tw                             % hold until the window fills
+                F = (60 / Tw^5) * (Ts/3) * sum(obj.w .* integrand);   % Simpson
             end
 
             % 3) Explicit iPD(I) feedback on the error (no estimator lag).
@@ -134,7 +153,7 @@ classdef second_order_F_estimator < matlab.System
         end
 
         function resetImpl(obj)
-            n = round(obj.T / obj.Ts);
+            n = obj.FFilter;  n = n + mod(n, 2);   % window samples, even (Simpson)
             obj.yref_km1 = 0;  obj.yref_km2 = 0;
             obj.y_buf    = zeros(n+1, 1);
             obj.u_buf    = zeros(n+1, 1);
@@ -148,7 +167,8 @@ classdef second_order_F_estimator < matlab.System
             % double.
             switch name
                 case {'y_buf', 'u_buf'}
-                    sz = [round(obj.T / obj.Ts) + 1, 1];
+                    n = obj.FFilter;  n = n + mod(n, 2);
+                    sz = [n + 1, 1];
                 otherwise
                     sz = [1 1];
             end
