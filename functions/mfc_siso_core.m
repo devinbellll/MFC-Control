@@ -6,8 +6,8 @@ classdef mfc_siso_core < matlab.System
     %
     %   Ultra-local model:  ddot_y = F + alpha*u
     %   Closed-loop poles:
-    %     use_Kd=false: double pole at -kp  (a = -2*kp,    b = -kp^2)
-    %     use_Kd=true:  omega_n=kp, zeta=kd (a = -2*kd*kp, b = -kp^2)
+    %     use_kd=false: double pole at -kp  (a = -2*kp,    b = -kp^2)
+    %     use_kd=true:  omega_n=kp, zeta=kd (a = -2*kd*kp, b = -kp^2)
     %
     %   Reference trajectory filter (time_trajec = T, dimensionless):
     %     sp_traj[k] = (sp + (2T^2+2T)*sp[k-1] + (-T^2)*sp[k-2]) / (T^2+2T+1)
@@ -16,31 +16,34 @@ classdef mfc_siso_core < matlab.System
     %   Command EMA filter: U = (raw + (command_filter-1)*U_prev) / command_filter
     %   command_filter=1 disables it (pass-through).
     %
-    %   NOTE on use_trajec_sp=false: the feedforward ddot_sp is still computed
+    %   Output saturation to [u_min, u_max] is applied only when
+    %   use_control_sat is enabled; otherwise U passes through unclamped.
+    %
+    %   NOTE on use_ref_filter=false: the feedforward ddot_sp is still computed
     %   from the raw setpoint history (sp_traj = setpoint passed through).
     %   The firmware zeroes it instead — that is a firmware bug.
     %
     %   Inputs : setpoint, measure, t     Outputs: U, F_k, sp_traj, err
 
-    % Tunable gains and limits
     properties
-        alpha          = 10
-        kp             = 1
-        kd             = 0
-        time_trajec    = 50      % reference trajectory filter constant
-        int_window     = 5       % F estimator filter constant
-        command_filter = 1       % EMA filter on output; 1 = off
-        u_min          = -9600
-        u_max          =  9600
+        alpha          = 10      % Model gain: ddot_y = F + alpha*u
+        kp             = 1       % Proportional gain (natural frequency omega_n if use_kd)
+        kd             = 0       % Damping ratio zeta; only used when use_kd = true
+        time_trajec    = 50      % Reference trajectory filter time constant [samples]
+        int_window     = 5       % F-estimator averaging window [samples]
+        command_filter = 1       % Output EMA filter constant; 1 = disabled (pass-through)
+        u_min          = -9600   % Minimum command output; applied only if use_control_sat
+        u_max          =  9600   % Maximum command output; applied only if use_control_sat
     end
 
     properties (Nontunable)
-        Ts = 0.002               % sample time [s]
+        Ts = 0.002                 % Sample time [s]
     end
 
     properties (Nontunable, Logical)
-        use_Kd       = false     % false: double pole at -kp; true: omega_n=kp, zeta=kd
-        use_trajec_sp = true     % false: raw setpoint pass-through (guidance axes)
+        use_control_sat = false    % Clamp U to [u_min, u_max]
+        use_kd          = false    % false: double pole at -kp | true: 2nd-order pole (omega_n=kp, zeta=kd)
+        use_ref_filter  = true     % false: raw setpoint pass-through (e.g. guidance axes) | true: filtered trajectory
     end
 
     properties (DiscreteState)
@@ -70,17 +73,17 @@ classdef mfc_siso_core < matlab.System
             al = obj.alpha;
 
             % 1) Reference trajectory filter (or raw pass-through)
-            if obj.use_trajec_sp
+            if obj.use_ref_filter
                 sp_traj = (setpoint + (2*T^2 + 2*T)*obj.setpoint_trajec_km1 + ...
                            (-T^2)*obj.setpoint_trajec_km2) / (T^2 + 2*T + 1);
             else
                 sp_traj = setpoint;
             end
-            % ddot always from sp_traj history (use_trajec_sp=false uses raw setpoint history)
+            % ddot always from sp_traj history (use_ref_filter=false uses raw setpoint history)
             ddot_sp = (sp_traj - 2*obj.setpoint_trajec_km1 + obj.setpoint_trajec_km2) / Ts^2;
 
             % 2) Control poles
-            if obj.use_Kd
+            if obj.use_kd
                 a = -2 * obj.kd * obj.kp;
             else
                 a = -2 * obj.kp;
@@ -113,8 +116,10 @@ classdef mfc_siso_core < matlab.System
             % 4) Command + EMA filter + saturation
             raw_cmd = -F_k/al + ddot_sp/al;
             U = (raw_cmd + (obj.command_filter - 1)*obj.command_km1) / obj.command_filter;
-            if U > obj.u_max; U = obj.u_max; end
-            if U < obj.u_min; U = obj.u_min; end
+            if obj.use_control_sat
+                if U > obj.u_max; U = obj.u_max; end
+                if U < obj.u_min; U = obj.u_min; end
+            end
 
             % Shift history
             obj.setpoint_trajec_km2 = obj.setpoint_trajec_km1;
