@@ -1,13 +1,22 @@
 classdef mfc_siso_core < matlab.System
-    % mfc_siso_core  Second-order Model-Free Control (MFC) SISO controller.
+    % mfc_siso_core  Model-Free Control (MFC) SISO controller, algebraic
+    %   (growing-window) F estimator.
     %
     %   Direct port of mfc_core.c (Paparazzi firmware).  Folded-estimator
     %   variant: the control poles are folded into the F estimator numerator.
     %
-    %   Ultra-local model:  ddot_y = F + alpha*u
+    %   use_first_order = false (default) -- ultra-local model: ddot_y = F + alpha*u
     %   Closed-loop poles:
     %     use_kd=false: double pole at -kp  (a = -2*kp,    b = -kp^2)
     %     use_kd=true:  omega_n=kp, zeta=kd (a = -2*kd*kp, b = -kp^2)
+    %
+    %   use_first_order = true -- ultra-local model: dot_y = F + alpha*u
+    %   The algebraic recursion has no room for a pole-fold term at first
+    %   order, so this identifies the RAW F and the single closed-loop pole at
+    %   -kp is applied as explicit feedback in the command law instead
+    %   (kd/use_kd are ignored in this mode):
+    %     num = -err + (t*err - (t-Ts)*err_km1)/Ts - t*alpha*U_km1;  den = t;
+    %     U   = (-F + dot_sp)/alpha - kp*err/alpha
     %
     %   Reference trajectory filter (time_trajec = T, dimensionless):
     %     sp_traj[k] = (sp + (2T^2+2T)*sp[k-1] + (-T^2)*sp[k-2]) / (T^2+2T+1)
@@ -19,9 +28,9 @@ classdef mfc_siso_core < matlab.System
     %   Output saturation to [u_min, u_max] is applied only when
     %   use_control_sat is enabled; otherwise U passes through unclamped.
     %
-    %   NOTE on use_ref_filter=false: the feedforward ddot_sp is still computed
-    %   from the raw setpoint history (sp_traj = setpoint passed through).
-    %   The firmware zeroes it instead — that is a firmware bug.
+    %   NOTE on use_ref_filter=false: the feedforward ddot_sp/dot_sp is still
+    %   computed from the raw setpoint history (sp_traj = setpoint passed
+    %   through). The firmware zeroes it instead — that is a firmware bug.
     %
     %   Inputs : setpoint, measure, t     Outputs: U, F_k, sp_traj, err
 
@@ -42,8 +51,9 @@ classdef mfc_siso_core < matlab.System
 
     properties (Nontunable, Logical)
         use_control_sat = false    % Clamp U to [u_min, u_max]
-        use_kd          = false    % false: double pole at -kp | true: 2nd-order pole (omega_n=kp, zeta=kd)
+        use_kd          = false    % false: double pole at -kp | true: 2nd-order pole (omega_n=kp, zeta=kd); ignored if use_first_order
         use_ref_filter  = true     % false: raw setpoint pass-through (e.g. guidance axes) | true: filtered trajectory
+        use_first_order = false    % false: ddot_y=F+alpha*u (folded poles) | true: dot_y=F+alpha*u (explicit kp feedback)
     end
 
     properties (DiscreteState)
@@ -79,28 +89,37 @@ classdef mfc_siso_core < matlab.System
             else
                 sp_traj = setpoint;
             end
-            % ddot always from sp_traj history (use_ref_filter=false uses raw setpoint history)
+            % Derivatives always from sp_traj history (use_ref_filter=false uses raw setpoint history)
+            dot_sp  = (sp_traj - obj.setpoint_trajec_km1) / Ts;
             ddot_sp = (sp_traj - 2*obj.setpoint_trajec_km1 + obj.setpoint_trajec_km2) / Ts^2;
-
-            % 2) Control poles
-            if obj.use_kd
-                a = -2 * obj.kd * obj.kp;
-            else
-                a = -2 * obj.kp;
-            end
-            b = -obj.kp^2;
 
             err = measure - sp_traj;
 
-            sde   = -(t*err - (t-Ts)*obj.error_km1) / Ts;
-            s2d2e =  (t^2*err - 2*(t-Ts)^2*obj.error_km1 + (t-2*Ts)^2*obj.error_km2) / Ts^2;
-            sd2e  =  (t^2*err - (t-Ts)^2*obj.error_km1) / Ts;
-            de    = -t*err;
-            d2e   =  t^2*err;
-            d2u   =  t^2*obj.command_km1;
+            if obj.use_first_order
+                % 2) First-order algebraic F estimator: dot_y = F + alpha*u.
+                %    No pole folding at this order; kp is applied explicitly
+                %    in the command law below (kd/use_kd are ignored here).
+                num = -err + (t*err - (t-Ts)*obj.error_km1)/Ts - t*al*obj.command_km1;
+                den = t;
+            else
+                % 2) Control poles folded into the 2nd-order algebraic estimator.
+                if obj.use_kd
+                    a = -2 * obj.kd * obj.kp;
+                else
+                    a = -2 * obj.kp;
+                end
+                b = -obj.kp^2;
 
-            num = 2*err + 4*sde + s2d2e - a*(2*de + sd2e) - b*d2e - al*d2u;
-            den = t^2;
+                sde   = -(t*err - (t-Ts)*obj.error_km1) / Ts;
+                s2d2e =  (t^2*err - 2*(t-Ts)^2*obj.error_km1 + (t-2*Ts)^2*obj.error_km2) / Ts^2;
+                sd2e  =  (t^2*err - (t-Ts)^2*obj.error_km1) / Ts;
+                de    = -t*err;
+                d2e   =  t^2*err;
+                d2u   =  t^2*obj.command_km1;
+
+                num = 2*err + 4*sde + s2d2e - a*(2*de + sd2e) - b*d2e - al*d2u;
+                den = t^2;
+            end
 
             % 3) F estimator filter
             Fnum = (num + (2*W^2 + 2*W)*obj.estimator_num_km1 + (-W^2)*obj.estimator_num_km2) ...
@@ -114,7 +133,11 @@ classdef mfc_siso_core < matlab.System
             end
 
             % 4) Command + EMA filter + saturation
-            raw_cmd = -F_k/al + ddot_sp/al;
+            if obj.use_first_order
+                raw_cmd = (-F_k + dot_sp)/al - obj.kp*err/al;
+            else
+                raw_cmd = -F_k/al + ddot_sp/al;
+            end
             U = (raw_cmd + (obj.command_filter - 1)*obj.command_km1) / obj.command_filter;
             if obj.use_control_sat
                 if U > obj.u_max; U = obj.u_max; end

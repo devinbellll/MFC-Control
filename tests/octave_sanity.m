@@ -4,11 +4,11 @@
 %         (also runs in MATLAB: >> run tests/octave_sanity.m)
 %
 %   Octave cannot instantiate matlab.System, so this file re-implements the
-%   ESTIMATOR MATH that lives in functions/first_order_F_estimator.m and
-%   functions/second_order_F_estimator.m (the estimator block of stepImpl) and
-%   checks it against plants with an analytically known F. It is the CI-friendly
-%   guard on the kernels / signs. For a test of the actual System objects in
-%   MATLAB, use tests/test_estimators.m instead.
+%   ESTIMATOR MATH that lives in functions/mfc_siso_non_algebraic.m (the
+%   use_first_order=true/false branches of the estimator block of stepImpl)
+%   and checks it against plants with an analytically known F. It is the
+%   CI-friendly guard on the kernels / signs. For a test of the actual System
+%   objects in MATLAB, use tests/test_estimators.m instead.
 %
 %   IMPORTANT: if you change the estimator formula in the source, mirror the
 %   change in est1/est2 below. The asserts (constant-F recovery, sinusoid
@@ -23,7 +23,7 @@ function w = simpweights(N)   % composite Simpson (N even): 1 4 2 .. 4 1
   w = ones(N+1,1); w(2:2:end-1) = 4; w(3:2:end-1) = 2;
 end
 
-function [F, st] = est1(ym, u, alpha, T, Ts, st)   % first_order_F_estimator (Eq.11)
+function [F, st] = est1(ym, u, alpha, T, Ts, st)   % mfc_siso_non_algebraic, use_first_order=true (Eq.11)
   if isempty(st)
     N=round(T/Ts); N=N+mod(N,2); st.Tw=N*Ts;       % even intervals (Simpson)
     st.sig=(0:N)'*Ts; st.yk=st.Tw-2*st.sig; st.w=simpweights(N);
@@ -34,7 +34,7 @@ function [F, st] = est1(ym, u, alpha, T, Ts, st)   % first_order_F_estimator (Eq
   F  = (-6/st.Tw^3)*(Ts/3)*sum(st.w.*(st.yk.*st.y + uk.*st.u));   % +uk.*u, Simpson
 end
 
-function [F, st] = est2(ym, u, alpha, T, Ts, st)   % second_order_F_estimator (Eq.16)
+function [F, st] = est2(ym, u, alpha, T, Ts, st)   % mfc_siso_non_algebraic, use_first_order=false (Eq.16)
   if isempty(st)
     N=round(T/Ts); N=N+mod(N,2); st.Tw=N*Ts;       % even intervals (Simpson)
     st.sig=(0:N)'*Ts; st.yk=st.Tw^2-6*st.Tw*st.sig+6*st.sig.^2; st.w=simpweights(N);

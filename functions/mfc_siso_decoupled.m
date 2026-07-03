@@ -1,25 +1,25 @@
 classdef mfc_siso_decoupled < matlab.System
     % mfc_siso_decoupled  Second-order Model-Free Control (MFC) SISO controller.
     %
-    %   DECOUPLED variant (canonical iPD; second-order analogue of
-    %   CSM_NG_alphaV). Two things are kept strictly separate:
+    %   DECOUPLED variant (canonical iPD; second-order analogue of the
+    %   algebraic first-order F estimator, e.g. mfc_siso_core with
+    %   use_first_order = true). Two things are kept strictly separate:
     %
     %     (a) F is estimated from the PURE plant model using ONLY (Ym, U,
-    %         alpha, t) -- exactly as CSM_NG_alphaV estimates from (Y, U,
-    %         alpha, k). The error never enters the estimator, so F is the TRUE
+    %         alpha, t). The error never enters the estimator, so F is the TRUE
     %         plant lumped dynamics ddot_y - alpha*u.
     %     (b) the stabilizing feedback is an EXPLICIT PD(I) law on the error:
     %
     %       u = ( -F + ddot_yref ) / alpha  -  ( Kd*dot_e + Kp*e + Ki*∫e ) / alpha
     %
     %   The feedback acts on the current error (no estimator lag), so gains map
-    %   cleanly onto the closed-loop poles. Trade-off vs. mfc_siso_folded: the
-    %   PD term needs an explicit error derivative (finite difference) which
-    %   amplifies measurement noise.
+    %   cleanly onto the closed-loop poles. Trade-off vs. mfc_siso_core (the
+    %   folded, use_first_order=false variant): the PD term needs an explicit
+    %   error derivative (finite difference) which amplifies measurement noise.
     %
     %   EQUIVALENCE: Kd = 2*p, Kp = p^2, Ki = 0 gives ddot_e + 2p*dot_e +
     %   p^2*e = 0, i.e. (s + p)^2 -- the same double pole as
-    %   mfc_siso_folded(pole_controller = p).
+    %   mfc_siso_core(kp = p, use_kd = false).
     %
     %   Inputs : Yref, Ym, t     Outputs: U, F, yref_filter, error
     %   (t is the simulation time, fed from a clock -- as in mfc_siso_run.)

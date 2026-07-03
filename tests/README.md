@@ -13,12 +13,17 @@ asserts tracking, steady-state `F` accuracy/sign, and a sign-flip regression.
 ```
 
 Covers:
-- `second_order_F_estimator` — step tracking + steady-state `F` vs analytic value.
+- `mfc_siso_non_algebraic` (`use_first_order=false`) — step tracking +
+  steady-state `F` vs analytic value.
 - **Sign-flip regression** — an open-loop-*unstable* plant (`ÿ = 4y + 2u`) with
   weak PD so that correct `F`-cancellation is the only thing keeping it bounded.
   The historical `-60/T^5` bug diverges here; the fixed `+60/T^5` stays bounded.
-- `first_order_F_estimator` — step tracking + steady-state `F`.
-- `mfc_siso_folded` / `mfc_siso_decoupled` — still track (validated estimators).
+- `mfc_siso_non_algebraic` (`use_first_order=true`) — step tracking + steady-state `F`.
+- `mfc_siso_core` (`use_first_order=false`, folded) / `mfc_siso_decoupled` — still
+  track (validated estimators).
+- `mfc_siso_core` (`use_first_order=true`) — the new algebraic 1st-order F
+  estimator (raw F identification + explicit `kp` feedback) — step tracking +
+  steady-state `F`.
 
 Prints `N passed, N failed` and `error()`s if anything fails.
 
@@ -30,8 +35,9 @@ Prints `N passed, N failed` and `error()`s if anything fails.
 ## `octave_sanity.m` — Octave or MATLAB (tests the estimator math)
 
 MATLAB-free guard on the estimator kernels and signs. Octave cannot instantiate
-`matlab.System`, so this re-implements the estimator block of `stepImpl` and
-checks it against plants with an analytically known `F`.
+`matlab.System`, so this re-implements the `use_first_order=true/false`
+branches of `mfc_siso_non_algebraic`'s `stepImpl` and checks it against plants
+with an analytically known `F`.
 
 ```bash
 octave --no-gui -q tests/octave_sanity.m   # exit code 0 = pass
@@ -42,6 +48,6 @@ guards** that fail on the two bugs that were fixed:
 - 2nd-order prefactor sign (`-60/T^5` returns `-F`),
 - 1st-order `u`-term sign (`- u_kernel` returns `F + extra*u`).
 
-> If you change an estimator formula in `functions/*_F_estimator.m`, mirror the
-> change in `est1`/`est2` inside `octave_sanity.m` (they are intentionally a
-> standalone copy of the math).
+> If you change an estimator formula in `functions/mfc_siso_non_algebraic.m`,
+> mirror the change in `est1`/`est2` inside `octave_sanity.m` (they are
+> intentionally a standalone copy of the math).
