@@ -16,6 +16,7 @@ clear
 
 build_AC_long;   % defines V0, g, X_*, Z_*, M_* and A_V0, B_V0
 
+%%
 x0 = [200; 0; 0; 0];
 mdl = 'AC_long_man';
 load_system(mdl);
@@ -32,27 +33,21 @@ for k = 1:4
 end
 
 u0 = [0; 0];
-[A, B, C, D] = linmod(mdl, x0, u0);
-A = A(p, p);   B = B(p, :);   C = C(:, p);
-
-% Physical -> normalized state coordinates
-T = diag([1/V0, 1, 1, 1]);
-A_hat = T * A / T;
-B_hat = T * B;
+[Alinmod, Blinmod, Clinmod, Dlinmod] = linmod(mdl, x0, u0);
+Alinmod = Alinmod(p, p);   Blinmod = Blinmod(p, :);   Clinmod = Clinmod(:, p);
 
 % A_V0(1,2) was transcribed rounded (-0.049 vs exact -g/V0 = -0.04905);
 % compare against the theoretically consistent value, as build_AC_long.m
 % does by hardcoding g = 9.81.
-A_ref = A_V0;
-A_ref(1, 2) = -g / V0;
+A_ref = A;
 
-errA = max(abs(A_hat(:) - A_ref(:)));
-errB = max(abs(B_hat(:) - B_V0(:)));
-errC = max(abs(C(:) - reshape(eye(4), [], 1)));
-errD = max(abs(D(:)));
+errA = max(abs(Alinmod(:) - A_ref(:)));
+errB = max(abs(Blinmod(:) - B(:)));
+errC = max(abs(Clinmod(:) - reshape(eye(4), [], 1)));
+errD = max(abs(Dlinmod(:)));
 
-fprintf('max |A_hat - A_ref| = %.3g\n', errA);
-fprintf('max |B_hat - B_V0|  = %.3g\n', errB);
+fprintf('max |Alinmod - A_ref| = %.3g\n', errA);
+fprintf('max |Blinmod - B_V0|  = %.3g\n', errB);
 fprintf('max |C - I|, |D|    = %.3g, %.3g\n', errC, errD);
 
 tol = 1e-6;
@@ -62,17 +57,21 @@ else
     warning('check_AC_long: linearization mismatch exceeds %.g.', tol);
 end
 
+Alinmod
+
+A_ref
+
 %% --- Time-domain check: 10 s free response to an alpha perturbation ---
 % Simulate the Simulink nonlinear model from trim with an initial alpha
 % offset (zero inputs) and compare against the original linear model
 % xdot = A_V0*x in the normalized state x = [dV/V0; gamma; alpha; q].
 alpha_pert = 10*pi/180;   % 2 deg initial alpha perturbation
-t = (0:0.01:10)';        % common, evenly spaced time grid
+t = (0:0.01:3)';        % common, evenly spaced time grid
 
 set_param([mdl '/Int alpha'], 'InitialCondition', num2str(alpha_pert, 17));
-restoreIC = onCleanup(@() set_param([mdl '/Int alpha'], 'InitialCondition', '0'));
+restoreIC = onCleanup(@() set_param([mdl '/Int alpha'], 'InitialCondition', 'x0(3)'));
 
-out  = sim(mdl, 'StopTime', '10', 'SaveTime', 'on', 'SaveOutput', 'on', ...
+out  = sim(mdl, 'StopTime', '3', 'SaveTime', 'on', 'SaveOutput', 'on', ...
            'SaveFormat', 'Array', 'ReturnWorkspaceOutputs', 'on', ...
            'OutputOption', 'SpecifiedOutputTimes', 'OutputTimes', 't');
 y_nl = out.yout;                     % columns: [V gamma alpha q], on grid t
@@ -82,17 +81,10 @@ set_param(mdl, 'Dirty', 'off');
 
 % Linear free response from the same perturbation via ss/initial, mapped
 % back to physical outputs (V = V0 + V0*x1).
-sys_lin = ss(A_V0, B_V0, eye(4), 0);
+sys_lin = ss(A, B, eye(4), 0);
 x0_lin  = [0; 0; alpha_pert; 0];
 x_lin   = initial(sys_lin, x0_lin, t);
-y_lin   = [V0 + V0*x_lin(:, 1), x_lin(:, 2:4)];
-
-% Linear free response from the same perturbation via ss/initial, mapped
-% back to physical outputs (V = V0 + V0*x1).
-sys_lin2 = ss(A, B, eye(4), 0);
-x0_lin2  = [0; 0; alpha_pert; 0];
-x_lin2   = initial(sys_lin2, x0_lin2, t);
-y_lin2   = [V0 + x_lin2(:, 1), x_lin2(:, 2:4)];
+y_lin   = [V0 + x_lin(:, 1), x_lin(:, 2:4)];
 
 names = {'V [m/s]', 'gamma [rad]', 'alpha [rad]', 'q [rad/s]'};
 peak  = max(abs(y_lin - [V0, 0, 0, 0]), [], 1);   % perturbation amplitude
@@ -105,7 +97,7 @@ end
 figure('Name', 'AC_long: nonlinear (Simulink) vs linear A(V0), alpha perturbation');
 for k = 1:4
     subplot(4, 1, k);
-    plot(t, y_nl(:, k), 'b-', t, y_lin(:, k), 'r--', t, y_lin2(:, k), 'g--');
+    plot(t, y_nl(:, k), 'b-', t, y_lin(:, k), 'r--');
     ylabel(names{k}); grid on;
     if k == 1
         title(sprintf('Free response, alpha(0) = %g deg', alpha_pert*180/pi));
