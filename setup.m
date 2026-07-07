@@ -5,7 +5,7 @@ close all
 addpath('functions');
 addpath('models');
 addpath('scripts');
-% addpath('analysis');
+addpath('models/plants/Darko/');
 
 %%
 X=1;
