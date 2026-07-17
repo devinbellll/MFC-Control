@@ -79,8 +79,6 @@ classdef mfc_siso_core < matlab.System
         Ki = 0
         % ref_filter_window Reference trajectory filter memory [samples]
         ref_filter_window = 10
-        % est_filter_window Estimator memory [samples] (algebraic: num/den smoother; sliding window: window length, rounded to even)
-        est_filter_window = 10
         % command_filter Output EMA filter constant; 1 = disabled (pass-through)
         command_filter = 1
         % u_min Lower command limit (only if saturation enabled)
@@ -92,6 +90,8 @@ classdef mfc_siso_core < matlab.System
     properties (Nontunable)
         % Ts Sample time [s] (fixes the block's discrete rate)
         Ts = 0.01
+        % est_filter_window Estimator memory [samples] (algebraic: num/den smoother; sliding window: window length, rounded to even). Nontunable: sizes the window buffers and quadrature kernel.
+        est_filter_window = 10
         % est_hold_time Algebraic estimator held at zero until t exceeds this [s]
         est_hold_time = 0.1
     end
@@ -166,6 +166,20 @@ classdef mfc_siso_core < matlab.System
                 'u_max',             obj.u_max);
         end
 
+        function n_buf = bufferLength(obj)
+            % Window buffer length: shared by resetImpl and
+            % getDiscreteStateSpecificationImpl so the sizes cannot diverge.
+            % Built only from Nontunable properties, so it is a compile-time
+            % constant under code generation.
+            if strncmp(obj.estimator_type, 'Algebraic', 9)
+                n_buf = 1;                            % unused placeholder
+            else
+                n     = obj.est_filter_window;
+                n     = n + mod(n, 2);                % even (Simpson)
+                n_buf = n + 1;
+            end
+        end
+
         function state = packState(obj)
             state = struct( ...
                 'sp_filt_km1',  obj.sp_filt_km1, ...
@@ -221,7 +235,6 @@ classdef mfc_siso_core < matlab.System
             c.Kd                = obj.Kd;
             c.Ki                = obj.Ki;
             c.ref_filter_window = obj.ref_filter_window;
-            c.est_filter_window = obj.est_filter_window;   % algebraic smoother only
             c.command_filter    = obj.command_filter;
             c.u_min             = obj.u_min;
             c.u_max             = obj.u_max;
@@ -252,22 +265,30 @@ classdef mfc_siso_core < matlab.System
         end
 
         function resetImpl(obj)
-            if isempty(obj.cfg)
-                obj.cfg = buildConfig(obj);
-            end
-            unpackState(obj, mfc_siso_init(obj.cfg));
+            % Zero the state directly instead of via mfc_siso_init: code
+            % generation types the discrete states from these assignments,
+            % so the buffers need a full-size zeros() with a codegen-constant
+            % length (mfc_siso_init sizes them from a run-time cfg value).
+            n_buf = bufferLength(obj);
+            obj.sp_filt_km1  = 0;
+            obj.sp_filt_km2  = 0;
+            obj.z_km1        = 0;
+            obj.z_km2        = 0;
+            obj.num_filt_km1 = 0;
+            obj.num_filt_km2 = 0;
+            obj.den_filt_km1 = 0;
+            obj.den_filt_km2 = 0;
+            obj.y_buf        = zeros(n_buf, 1);
+            obj.u_buf        = zeros(n_buf, 1);
+            obj.err_km1      = 0;
+            obj.int_err      = 0;
+            obj.u_km1        = 0;
         end
 
         function [sz, dt, cp] = getDiscreteStateSpecificationImpl(obj, name)
             switch name
                 case {'y_buf', 'u_buf'}
-                    if strncmp(obj.estimator_type, 'Algebraic', 9)
-                        sz = [1 1];                       % unused placeholder
-                    else
-                        n  = obj.est_filter_window;
-                        n  = n + mod(n, 2);               % even (Simpson)
-                        sz = [n + 1, 1];
-                    end
+                    sz = [bufferLength(obj), 1];
                 otherwise
                     sz = [1 1];
             end

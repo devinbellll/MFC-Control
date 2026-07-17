@@ -94,6 +94,9 @@ state.num_filt_km1 = num_filt;
 state.den_filt_km2 = state.den_filt_km1;
 state.den_filt_km1 = den_filt;
 
+% 'integral' is zero-filled so dbg has the same struct type as the other
+% mfc_fhat_* variants (required for code generation of the dispatch).
 dbg = struct('num_raw', num_raw, 'den_raw', den_raw, ...
-             'num_filt', num_filt, 'den_filt', den_filt, 'valid', valid);
+             'num_filt', num_filt, 'den_filt', den_filt, ...
+             'integral', 0, 'valid', valid);
 end

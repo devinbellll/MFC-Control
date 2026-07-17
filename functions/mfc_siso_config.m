@@ -53,7 +53,8 @@ function cfg = mfc_siso_config(varargin)
 %
 %   Output: cfg struct with the fields above (structure/estimator resolved
 %   to logicals cfg.coupled / cfg.algebraic) plus cfg.kernel (sliding-window
-%   quadrature kernel, [] for algebraic variants).
+%   quadrature kernel; also present but unused for algebraic variants, so
+%   cfg has a single concrete type under code generation).
 %
 %   See also MFC_SISO_INIT, MFC_SISO_STEP, MFC_SISO_CORE.
 
@@ -90,26 +91,38 @@ assert(any(strcmp(p.structure, {'coupled', 'decoupled'})), ...
 assert(any(strcmp(p.estimator, {'algebraic', 'sliding_window'})), ...
     'mfc_siso_config: estimator must be ''algebraic'' or ''sliding_window''.');
 
-cfg           = p;
-cfg.coupled   = strcmp(p.structure, 'coupled');
-cfg.algebraic = strcmp(p.estimator, 'algebraic');
+coupled   = strcmp(p.structure, 'coupled');
+algebraic = strcmp(p.estimator, 'algebraic');
 
-assert(~(cfg.coupled && ~cfg.algebraic), ...
+assert(~(coupled && ~algebraic), ...
     ['mfc_siso_config: the coupled (error-driven, pole-folded) structure is ', ...
      'only defined for the algebraic estimator. Use structure=''decoupled'' ', ...
      'with estimator=''sliding_window''.']);
 
 % --- validate tuning -----------------------------------------------------
-validateattributes(cfg.Ts, {'numeric'}, {'scalar', 'positive'}, '', 'Ts');
-validateattributes(cfg.command_filter, {'numeric'}, {'scalar', '>=', 1}, '', 'command_filter');
-validateattributes(cfg.ref_filter_window, {'numeric'}, {'scalar', 'nonnegative'}, '', 'ref_filter_window');
-validateattributes(cfg.est_filter_window, {'numeric'}, {'scalar', 'positive'}, '', 'est_filter_window');
-assert(cfg.u_max > cfg.u_min, 'mfc_siso_config: u_max must exceed u_min.');
+validateattributes(p.Ts, {'numeric'}, {'scalar', 'positive'}, '', 'Ts');
+validateattributes(p.command_filter, {'numeric'}, {'scalar', '>=', 1}, '', 'command_filter');
+validateattributes(p.ref_filter_window, {'numeric'}, {'scalar', 'nonnegative'}, '', 'ref_filter_window');
+validateattributes(p.est_filter_window, {'numeric'}, {'scalar', 'positive'}, '', 'est_filter_window');
+assert(p.u_max > p.u_min, 'mfc_siso_config: u_max must exceed u_min.');
 
 % --- precompute the sliding-window kernel --------------------------------
-if cfg.algebraic
-    cfg.kernel = [];
+% Computed for EVERY variant: under code generation both estimator branches
+% of MFC_SISO_STEP are compiled (cfg.algebraic is a run-time struct field
+% there), so cfg.kernel must always be a struct with one concrete field set.
+% Algebraic variants never evaluate it; their window value is sanitized so
+% any positive smoother memory remains accepted.
+if algebraic
+    win = max(2, round(p.est_filter_window));
 else
-    cfg.kernel = mfc_window_kernel(cfg.model_order, cfg.est_filter_window, cfg.Ts);
+    win = p.est_filter_window;
 end
+kernel = mfc_window_kernel(p.model_order, win, p.Ts);
+
+% Assemble cfg in one pass: MATLAB Coder forbids adding struct fields after
+% the struct has been read, so every field must exist before first use.
+cfg           = p;
+cfg.coupled   = coupled;
+cfg.algebraic = algebraic;
+cfg.kernel    = kernel;
 end

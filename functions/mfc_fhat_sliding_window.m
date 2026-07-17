@@ -45,9 +45,14 @@ function [F_hat, state, dbg] = mfc_fhat_sliding_window(y, u_prev, alpha, t, kern
 %   See also MFC_WINDOW_KERNEL, MFC_FHAT_ALGEBRAIC_FIRST_ORDER,
 %   MFC_FHAT_ALGEBRAIC_SECOND_ORDER, MFC_SISO_STEP.
 
-% Slide the window buffers (newest sample last)
-state.y_buf = [state.y_buf(2:end); y];
-state.u_buf = [state.u_buf(2:end); u_prev];
+% Slide the window buffers (newest sample last). circshift + end-assignment
+% instead of [buf(2:end); new]: identical result, but also valid for the 1x1
+% placeholder buffers of algebraic variants, whose (dead) copy of this code
+% is still compiled under code generation.
+state.y_buf        = circshift(state.y_buf, -1);
+state.y_buf(end)   = y;
+state.u_buf        = circshift(state.u_buf, -1);
+state.u_buf(end)   = u_prev;
 
 % Composite Simpson quadrature of the weighted integrand
 integrand = kernel.y_kernel .* state.y_buf + alpha * kernel.u_kernel_unit .* state.u_buf;
@@ -60,5 +65,8 @@ else
     F_hat = 0;
 end
 
-dbg = struct('integral', integral, 'valid', valid);
+% num/den fields are zero-filled so dbg has the same struct type as the
+% algebraic mfc_fhat_* variants (required for code generation of the dispatch).
+dbg = struct('num_raw', 0, 'den_raw', 0, 'num_filt', 0, 'den_filt', 0, ...
+             'integral', integral, 'valid', valid);
 end
