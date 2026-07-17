@@ -17,10 +17,12 @@ function cfg = mfc_siso_config(varargin)
 %     'structure'    : 'coupled' | 'decoupled' (default 'coupled')
 %         coupled  : the F estimator is driven by the tracking ERROR. At
 %                    2nd order the closed-loop polynomial s^2 + Kd*s + Kp is
-%                    folded into the estimate; at 1st order the annihilator
-%                    has no room for a fold, so Kp stays explicit.
+%                    folded into the estimate; at 1st order the closed-loop
+%                    pole s + Kp is folded (Kd has no derivative room to
+%                    fold at 1st order, so it is unused there).
 %         decoupled: the F estimator is driven by the pure MEASUREMENT
-%                    (true-plant F); feedback is an explicit iP/iPD(I) law.
+%                    (true-plant F); feedback is an explicit iP/iPD(I) law,
+%                    at either model order.
 %     'estimator'    : 'algebraic' | 'sliding_window' (default 'algebraic')
 %         algebraic     : growing-window operational-calculus recursion.
 %         sliding_window: fixed-length Simpson-quadrature integral
@@ -32,7 +34,11 @@ function cfg = mfc_siso_config(varargin)
 %     'Kp', 'Kd', 'Ki'    : feedback gains (defaults 25, 10, 0).
 %         2nd order: characteristic polynomial s^2 + Kd*s + Kp
 %                    (double pole at -p  <=>  Kd = 2p, Kp = p^2).
-%         1st order: single pole at -Kp; Kd unused.
+%         1st order: single pole at -Kp.
+%         Kp is folded into F_hat whenever coupled (either order); explicit
+%         whenever decoupled (either order). Kd is folded into F_hat when
+%         coupled at 2nd order, unused when coupled at 1st order (no
+%         derivative room to fold), and explicit whenever decoupled.
 %         Ki is always applied explicitly (0 disables integral action).
 %     'ref_filter_window' : reference trajectory filter memory [samples]
 %                           (default 10; see MFC_IIR_SMOOTHER)

@@ -9,10 +9,13 @@ classdef mfc_siso_core < matlab.System
     %     Controller structure Coupled   -- the F estimator is driven by the
     %                          tracking error; at second order the closed-loop
     %                          polynomial s^2 + Kd*s + Kp is folded into the
-    %                          estimate, at first order Kp stays explicit.
+    %                          estimate, at first order the pole s + Kp is
+    %                          folded (Kd has no derivative room to fold at
+    %                          first order, so it is unused there).
     %                          Decoupled -- the F estimator is driven by the
     %                          pure measurement (true-plant F) and an explicit
-    %                          iP/iPD(I) feedback law stabilizes the error.
+    %                          iP/iPD(I) feedback law stabilizes the error, at
+    %                          either model order.
     %     Estimator type       Algebraic (growing-window operational-calculus
     %                          recursion) or Sliding window (fixed-length
     %                          Simpson-quadrature integral; decoupled only).
@@ -23,11 +26,14 @@ classdef mfc_siso_core < matlab.System
     %   mfc_iir_smoother. This class only maps mask parameters and Simulink
     %   ports/states onto those functions.
     %
-    %   Command law (Kd is always active at second order):
+    %   Command law (fold vs explicit is decided by coupled/decoupled alone;
+    %   model order only selects the feedforward derivative order):
     %     2nd order: u = ( -F_hat + ddot_sp - fb ) / alpha
-    %                fb = Kd*dot_err + Kp*err + Ki*int_err   (decoupled)
-    %                fb =                       Ki*int_err   (coupled)
-    %     1st order: u = ( -F_hat + dot_sp - Kp*err - Ki*int_err ) / alpha
+    %     1st order: u = ( -F_hat + dot_sp  - fb ) / alpha
+    %     fb = Kd*dot_err + Kp*err + Ki*int_err   (decoupled, either order)
+    %     fb =                       Ki*int_err   (coupled, either order:
+    %                                              Kp always folded, Kd
+    %                                              folded only at 2nd order)
     %   followed by an optional output EMA filter and saturation with
     %   integrator-freeze anti-windup.
     %
@@ -71,9 +77,9 @@ classdef mfc_siso_core < matlab.System
     properties
         % alpha Ultra-local model input gain (ignored if live alpha input is enabled)
         alpha = 1
-        % Kp Proportional gain (2nd order: s^2 + Kd*s + Kp; double pole at -p -> Kp = p^2. 1st order: pole at -Kp)
+        % Kp Proportional gain (2nd order: s^2 + Kd*s + Kp; double pole at -p -> Kp = p^2. 1st order: pole at -Kp). Folded into F_hat whenever coupled; explicit whenever decoupled.
         Kp = 25
-        % Kd Derivative gain (2nd order only; double pole at -p -> Kd = 2p)
+        % Kd Derivative gain (double pole at -p -> Kd = 2p). Folded into F_hat when coupled at 2nd order; unused when coupled at 1st order (no derivative room to fold); explicit whenever decoupled, at either order.
         Kd = 10
         % Ki Integral gain (0 disables integral action)
         Ki = 0

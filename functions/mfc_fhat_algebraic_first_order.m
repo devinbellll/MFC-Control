@@ -1,13 +1,13 @@
 function [F_hat, state, dbg] = mfc_fhat_algebraic_first_order( ...
-    z, u_prev, alpha, t, Ts, filter_window, hold_time, state)
+    z, u_prev, alpha, t, Ts, filter_window, hold_time, b_fold, state)
 %MFC_FHAT_ALGEBRAIC_FIRST_ORDER Algebraic (growing-window) F estimator, 1st order.
 %
 %   [F_hat, state, dbg] = MFC_FHAT_ALGEBRAIC_FIRST_ORDER( ...
-%       z, u_prev, alpha, t, Ts, filter_window, hold_time, state)
+%       z, u_prev, alpha, t, Ts, filter_window, hold_time, b_fold, state)
 %
 %   Estimates F in the first-order ultra-local model
 %
-%       dot_z = F + alpha * u
+%       dot_z = F + alpha * u + b_fold * z
 %
 %   using the algebraic (operational-calculus) method: the model is written
 %   in the Laplace domain, differentiated once w.r.t. s to annihilate the
@@ -16,8 +16,12 @@ function [F_hat, state, dbg] = mfc_fhat_algebraic_first_order( ...
 %   expressions (time-weighted from the start of the run) are discretized
 %   with backward differences:
 %
-%       num[k] = -z[k] + ( t*z[k] - (t-Ts)*z[k-1] ) / Ts - t*alpha*u_prev
+%       num[k] = -z[k] + ( t*z[k] - (t-Ts)*z[k-1] ) / Ts - t*alpha*u_prev - t*b_fold*z[k]
 %       den[k] = t
+%
+%   b_fold*z is a known-coefficient term added to the model on the same
+%   footing as alpha*u (both order-0, known-coefficient terms), so it is
+%   annihilated by the identical t^1 transform.
 %
 %   Both are smoothed with the shared second-order IIR (MFC_IIR_SMOOTHER,
 %   memory = filter_window samples) before the division, and the estimate is
@@ -25,13 +29,12 @@ function [F_hat, state, dbg] = mfc_fhat_algebraic_first_order( ...
 %   near-zero denominator.
 %
 %   COUPLED vs DECOUPLED use (selected by the caller through z):
-%     * decoupled: z = y_measured        -> F_hat is the pure-plant lumped
-%       dynamics dot_y - alpha*u; stabilizing feedback must be added
+%     * decoupled: z = y_measured, b_fold = 0  -> F_hat is the pure-plant
+%       lumped dynamics dot_y - alpha*u; stabilizing feedback must be added
 %       explicitly in the command law.
-%     * coupled:   z = tracking error    -> F_hat absorbs the reference
-%       dynamics; at first order there is no room in the annihilator for a
-%       pole-fold term, so the proportional feedback still has to be applied
-%       explicitly in the command law.
+%     * coupled:   z = tracking error, b_fold = -Kp  -> the closed-loop
+%       characteristic polynomial s + Kp is folded into the estimate, so the
+%       command law needs no explicit proportional feedback.
 %
 %   Inputs
 %     z             : estimator drive signal at step k (measurement or error)
@@ -41,6 +44,7 @@ function [F_hat, state, dbg] = mfc_fhat_algebraic_first_order( ...
 %     Ts            : sample time [s]
 %     filter_window : IIR smoother memory [samples]
 %     hold_time     : F_hat is forced to 0 while t <= hold_time [s]
+%     b_fold        : folded z coefficient (coupled: -Kp, decoupled: 0)
 %     state         : struct, fields used/updated here:
 %                       .z_km1, .z_km2            signal history
 %                       .num_filt_km1/2           smoothed numerator history
@@ -55,7 +59,7 @@ function [F_hat, state, dbg] = mfc_fhat_algebraic_first_order( ...
 %   MFC_SISO_STEP.
 
 % Growing-window annihilator, discretized (backward differences)
-num_raw = -z + (t*z - (t - Ts)*state.z_km1)/Ts - t*alpha*u_prev;
+num_raw = -z + (t*z - (t - Ts)*state.z_km1)/Ts - t*alpha*u_prev - t*b_fold*z;
 den_raw = t;
 
 % Smooth numerator and denominator identically before dividing
