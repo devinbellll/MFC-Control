@@ -1,71 +1,131 @@
 classdef mfc_siso_core < matlab.System
-    % mfc_siso_core  Model-Free Control (MFC) SISO controller, algebraic
-    %   (growing-window) F estimator.
+    % mfc_siso_core  Model-Free Control (MFC) SISO controller block.
     %
-    %   Direct port of mfc_core.c (Paparazzi firmware).  Folded-estimator
-    %   variant: the control poles are folded into the F estimator numerator.
+    %   Manager block for the MFC SISO controller family. The algorithm
+    %   variant is selected on the mask along three axes:
     %
-    %   use_first_order = false (default) -- ultra-local model: ddot_y = F + alpha*u
-    %   Closed-loop poles:
-    %     use_kd=false: double pole at -kp  (a = -2*kp,    b = -kp^2)
-    %     use_kd=true:  omega_n=kp, zeta=kd (a = -2*kd*kp, b = -kp^2)
+    %     Model order          First order  (dot_y  = F + alpha*u)
+    %                          Second order (ddot_y = F + alpha*u)
+    %     Controller structure Coupled   -- the F estimator is driven by the
+    %                          tracking error; at second order the closed-loop
+    %                          polynomial s^2 + Kd*s + Kp is folded into the
+    %                          estimate, at first order Kp stays explicit.
+    %                          Decoupled -- the F estimator is driven by the
+    %                          pure measurement (true-plant F) and an explicit
+    %                          iP/iPD(I) feedback law stabilizes the error.
+    %     Estimator type       Algebraic (growing-window operational-calculus
+    %                          recursion) or Sliding window (fixed-length
+    %                          Simpson-quadrature integral; decoupled only).
     %
-    %   use_first_order = true -- ultra-local model: dot_y = F + alpha*u
-    %   The algebraic recursion has no room for a pole-fold term at first
-    %   order, so this identifies the RAW F and the single closed-loop pole at
-    %   -kp is applied as explicit feedback in the command law instead
-    %   (kd/use_kd are ignored in this mode):
-    %     num = -err + (t*err - (t-Ts)*err_km1)/Ts - t*alpha*U_km1;  den = t;
-    %     U   = (-F + dot_sp)/alpha - kp*err/alpha
+    %   The numerics live in plain, individually testable functions:
+    %   mfc_siso_step (per-sample law and dispatch), mfc_fhat_algebraic_
+    %   first/second_order, mfc_fhat_sliding_window, mfc_window_kernel and
+    %   mfc_iir_smoother. This class only maps mask parameters and Simulink
+    %   ports/states onto those functions.
     %
-    %   Reference trajectory filter (time_trajec = T, dimensionless):
-    %     sp_traj[k] = (sp + (2T^2+2T)*sp[k-1] + (-T^2)*sp[k-2]) / (T^2+2T+1)
-    %   Same IIR structure for the F estimator (int_window = W).
+    %   Command law (Kd is always active at second order):
+    %     2nd order: u = ( -F_hat + ddot_sp - fb ) / alpha
+    %                fb = Kd*dot_err + Kp*err + Ki*int_err   (decoupled)
+    %                fb =                       Ki*int_err   (coupled)
+    %     1st order: u = ( -F_hat + dot_sp - Kp*err - Ki*int_err ) / alpha
+    %   followed by an optional output EMA filter and saturation with
+    %   integrator-freeze anti-windup.
     %
-    %   Command EMA filter: U = (raw + (command_filter-1)*U_prev) / command_filter
-    %   command_filter=1 disables it (pass-through).
+    %   Ports
+    %     In : y_sp (setpoint), y_m (measurement), t (clock)
+    %          u_applied -- optional (External applied-command input): the
+    %          command that actually reached the plant during the last
+    %          sample, e.g. from a measured actuator or after an external
+    %          limiter. It replaces the internally stored previous command
+    %          in the estimator, the window buffers and the EMA filter.
+    %          alpha -- optional (Live alpha input): overrides the alpha
+    %          mask parameter sample by sample.
+    %     Out: u, F_hat, sp_filt, err, u_raw (pre-filter/saturation command),
+    %          F_valid (1 once the estimator is past its startup hold).
     %
-    %   Output saturation to [u_min, u_max] is applied only when
-    %   use_control_sat is enabled; otherwise U passes through unclamped.
-    %
-    %   NOTE on use_ref_filter=false: the feedforward ddot_sp/dot_sp is still
-    %   computed from the raw setpoint history (sp_traj = setpoint passed
-    %   through). The firmware zeroes it instead — that is a firmware bug.
-    %
-    %   Inputs : setpoint, measure, t     Outputs: U, F_k, sp_traj, err
+    %   See also mfc_siso_config, mfc_siso_step, mfc_siso_init.
 
+    % ---- Algorithm variant (mask dropdowns) -----------------------------
+    properties (Nontunable)
+        % model_order Order of the ultra-local model
+        model_order = 'Second order (ddot_y = F + alpha*u)'
+        % controller_structure Where the stabilizing dynamics live
+        controller_structure = 'Coupled (error-driven estimator, poles folded)'
+        % estimator_type F-hat estimation method
+        estimator_type = 'Algebraic (growing window)'
+    end
+
+    properties (Hidden, Constant)
+        model_orderSet = matlab.system.StringSet({ ...
+            'First order (dot_y = F + alpha*u)', ...
+            'Second order (ddot_y = F + alpha*u)'});
+        controller_structureSet = matlab.system.StringSet({ ...
+            'Coupled (error-driven estimator, poles folded)', ...
+            'Decoupled (measurement-driven estimator, explicit iP/iPD)'});
+        estimator_typeSet = matlab.system.StringSet({ ...
+            'Algebraic (growing window)', ...
+            'Sliding window (Simpson quadrature)'});
+    end
+
+    % ---- Tuning ----------------------------------------------------------
     properties
-        alpha          = 10      % Model gain: ddot_y = F + alpha*u
-        kp             = 1       % Proportional gain (natural frequency omega_n if use_kd)
-        kd             = 0       % Damping ratio zeta; only used when use_kd = true
-        time_trajec    = 50      % Reference trajectory filter time constant [samples]
-        int_window     = 5       % F-estimator averaging window [samples]
-        command_filter = 1       % Output EMA filter constant; 1 = disabled (pass-through)
-        u_min          = -9600   % Minimum command output; applied only if use_control_sat
-        u_max          =  9600   % Maximum command output; applied only if use_control_sat
+        % alpha Ultra-local model input gain (ignored if live alpha input is enabled)
+        alpha = 1
+        % Kp Proportional gain (2nd order: s^2 + Kd*s + Kp; double pole at -p -> Kp = p^2. 1st order: pole at -Kp)
+        Kp = 25
+        % Kd Derivative gain (2nd order only; double pole at -p -> Kd = 2p)
+        Kd = 10
+        % Ki Integral gain (0 disables integral action)
+        Ki = 0
+        % ref_filter_window Reference trajectory filter memory [samples]
+        ref_filter_window = 10
+        % est_filter_window Estimator memory [samples] (algebraic: num/den smoother; sliding window: window length, rounded to even)
+        est_filter_window = 10
+        % command_filter Output EMA filter constant; 1 = disabled (pass-through)
+        command_filter = 1
+        % u_min Lower command limit (only if saturation enabled)
+        u_min = -600
+        % u_max Upper command limit (only if saturation enabled)
+        u_max = 600
     end
 
     properties (Nontunable)
-        Ts = 0.002                 % Sample time [s]
+        % Ts Sample time [s] (fixes the block's discrete rate)
+        Ts = 0.01
+        % est_hold_time Algebraic estimator held at zero until t exceeds this [s]
+        est_hold_time = 0.1
     end
 
+    % ---- Options (mask checkboxes) ---------------------------------------
     properties (Nontunable, Logical)
-        use_control_sat = false    % Clamp U to [u_min, u_max]
-        use_kd          = false    % false: double pole at -kp | true: 2nd-order pole (omega_n=kp, zeta=kd); ignored if use_first_order
-        use_ref_filter  = true     % false: raw setpoint pass-through (e.g. guidance axes) | true: filtered trajectory
-        use_first_order = false    % false: ddot_y=F+alpha*u (folded poles) | true: dot_y=F+alpha*u (explicit kp feedback)
+        % use_ref_filter Filter the setpoint into a smooth reference trajectory
+        use_ref_filter = true
+        % use_control_sat Clamp the command to [u_min, u_max] (with anti-windup)
+        use_control_sat = false
+        % use_external_command Add the u_applied input port (feed back the command that actually reached the plant)
+        use_external_command = false
+        % use_live_alpha Add the alpha input port (overrides the alpha parameter)
+        use_live_alpha = false
     end
 
     properties (DiscreteState)
-        setpoint_trajec_km1
-        setpoint_trajec_km2
-        error_km1
-        error_km2
-        estimator_num_km1
-        estimator_num_km2
-        estimator_den_km1
-        estimator_den_km2
-        command_km1
+        sp_filt_km1
+        sp_filt_km2
+        z_km1
+        z_km2
+        num_filt_km1
+        num_filt_km2
+        den_filt_km1
+        den_filt_km2
+        y_buf
+        u_buf
+        err_km1
+        int_err
+        u_km1
+    end
+
+    properties (Access = private)
+        cfg     % configuration struct built by mfc_siso_config in setupImpl
     end
 
     methods
@@ -74,129 +134,239 @@ classdef mfc_siso_core < matlab.System
         end
     end
 
+    methods (Access = private)
+        function cfg = buildConfig(obj)
+            if strncmp(obj.model_order, 'First', 5), order = 1; else, order = 2; end
+            if strncmp(obj.controller_structure, 'Coupled', 7)
+                structure = 'coupled';
+            else
+                structure = 'decoupled';
+            end
+            if strncmp(obj.estimator_type, 'Algebraic', 9)
+                estimator = 'algebraic';
+            else
+                estimator = 'sliding_window';
+            end
+            cfg = mfc_siso_config( ...
+                'model_order',       order, ...
+                'structure',         structure, ...
+                'estimator',         estimator, ...
+                'Ts',                obj.Ts, ...
+                'alpha',             obj.alpha, ...
+                'Kp',                obj.Kp, ...
+                'Kd',                obj.Kd, ...
+                'Ki',                obj.Ki, ...
+                'ref_filter_window', obj.ref_filter_window, ...
+                'est_filter_window', obj.est_filter_window, ...
+                'est_hold_time',     obj.est_hold_time, ...
+                'command_filter',    obj.command_filter, ...
+                'use_ref_filter',    obj.use_ref_filter, ...
+                'use_control_sat',   obj.use_control_sat, ...
+                'u_min',             obj.u_min, ...
+                'u_max',             obj.u_max);
+        end
+
+        function state = packState(obj)
+            state = struct( ...
+                'sp_filt_km1',  obj.sp_filt_km1, ...
+                'sp_filt_km2',  obj.sp_filt_km2, ...
+                'z_km1',        obj.z_km1, ...
+                'z_km2',        obj.z_km2, ...
+                'num_filt_km1', obj.num_filt_km1, ...
+                'num_filt_km2', obj.num_filt_km2, ...
+                'den_filt_km1', obj.den_filt_km1, ...
+                'den_filt_km2', obj.den_filt_km2, ...
+                'y_buf',        obj.y_buf, ...
+                'u_buf',        obj.u_buf, ...
+                'err_km1',      obj.err_km1, ...
+                'int_err',      obj.int_err, ...
+                'u_km1',        obj.u_km1);
+        end
+
+        function unpackState(obj, state)
+            obj.sp_filt_km1  = state.sp_filt_km1;
+            obj.sp_filt_km2  = state.sp_filt_km2;
+            obj.z_km1        = state.z_km1;
+            obj.z_km2        = state.z_km2;
+            obj.num_filt_km1 = state.num_filt_km1;
+            obj.num_filt_km2 = state.num_filt_km2;
+            obj.den_filt_km1 = state.den_filt_km1;
+            obj.den_filt_km2 = state.den_filt_km2;
+            obj.y_buf        = state.y_buf;
+            obj.u_buf        = state.u_buf;
+            obj.err_km1      = state.err_km1;
+            obj.int_err      = state.int_err;
+            obj.u_km1        = state.u_km1;
+        end
+    end
+
     methods (Access = protected)
 
-        function [U, F_k, sp_traj, err] = stepImpl(obj, setpoint, measure, t)
-            Ts = obj.Ts;
-            T  = obj.time_trajec;
-            W  = obj.int_window;
-            al = obj.alpha;
+        function validatePropertiesImpl(obj)
+            % mfc_siso_config validates gains and rejects the undefined
+            % coupled + sliding-window combination, so mask errors surface
+            % at once.
+            buildConfig(obj);
+        end
 
-            % 1) Reference trajectory filter (or raw pass-through)
-            if obj.use_ref_filter
-                sp_traj = (setpoint + (2*T^2 + 2*T)*obj.setpoint_trajec_km1 + ...
-                           (-T^2)*obj.setpoint_trajec_km2) / (T^2 + 2*T + 1);
+        function setupImpl(obj)
+            obj.cfg = buildConfig(obj);
+        end
+
+        function [u, F_hat, sp_filt, err, u_raw, F_valid] = stepImpl(obj, setpoint, measure, t, varargin)
+            % Live tunable-parameter changes must reach the config
+            c = obj.cfg;
+            c.alpha             = obj.alpha;
+            c.Kp                = obj.Kp;
+            c.Kd                = obj.Kd;
+            c.Ki                = obj.Ki;
+            c.ref_filter_window = obj.ref_filter_window;
+            c.est_filter_window = obj.est_filter_window;   % algebraic smoother only
+            c.command_filter    = obj.command_filter;
+            c.u_min             = obj.u_min;
+            c.u_max             = obj.u_max;
+
+            % Optional ports, in declaration order: u_applied, then alpha
+            idx = 1;
+            if obj.use_external_command
+                u_prev = varargin{idx};  idx = idx + 1;
             else
-                sp_traj = setpoint;
+                u_prev = obj.u_km1;
             end
-            % Derivatives always from sp_traj history (use_ref_filter=false uses raw setpoint history)
-            dot_sp  = (sp_traj - obj.setpoint_trajec_km1) / Ts;
-            ddot_sp = (sp_traj - 2*obj.setpoint_trajec_km1 + obj.setpoint_trajec_km2) / Ts^2;
-
-            err = measure - sp_traj;
-
-            if obj.use_first_order
-                % 2) First-order algebraic F estimator: dot_y = F + alpha*u.
-                %    No pole folding at this order; kp is applied explicitly
-                %    in the command law below (kd/use_kd are ignored here).
-                num = -err + (t*err - (t-Ts)*obj.error_km1)/Ts - t*al*obj.command_km1;
-                den = t;
+            if obj.use_live_alpha
+                alpha_k = varargin{idx};
             else
-                % 2) Control poles folded into the 2nd-order algebraic estimator.
-                if obj.use_kd
-                    a = -2 * obj.kd * obj.kp;
-                else
-                    a = -2 * obj.kp;
-                end
-                b = -obj.kp^2;
-
-                sde   = -(t*err - (t-Ts)*obj.error_km1) / Ts;
-                s2d2e =  (t^2*err - 2*(t-Ts)^2*obj.error_km1 + (t-2*Ts)^2*obj.error_km2) / Ts^2;
-                sd2e  =  (t^2*err - (t-Ts)^2*obj.error_km1) / Ts;
-                de    = -t*err;
-                d2e   =  t^2*err;
-                d2u   =  t^2*obj.command_km1;
-
-                num = 2*err + 4*sde + s2d2e - a*(2*de + sd2e) - b*d2e - al*d2u;
-                den = t^2;
+                alpha_k = obj.alpha;
             end
 
-            % 3) F estimator filter
-            Fnum = (num + (2*W^2 + 2*W)*obj.estimator_num_km1 + (-W^2)*obj.estimator_num_km2) ...
-                   / (W^2 + 2*W + 1);
-            Fden = (den + (2*W^2 + 2*W)*obj.estimator_den_km1 + (-W^2)*obj.estimator_den_km2) ...
-                   / (W^2 + 2*W + 1);
+            state = packState(obj);
+            [out, state] = mfc_siso_step(setpoint, measure, t, u_prev, alpha_k, c, state);
+            unpackState(obj, state);
 
-            F_k = 0;
-            if (Fden ~= 0) && (t > 0.1)
-                F_k = Fnum / Fden;
-            end
-
-            % 4) Command + EMA filter + saturation
-            if obj.use_first_order
-                raw_cmd = (-F_k + dot_sp)/al - obj.kp*err/al;
-            else
-                raw_cmd = -F_k/al + ddot_sp/al;
-            end
-            U = (raw_cmd + (obj.command_filter - 1)*obj.command_km1) / obj.command_filter;
-            if obj.use_control_sat
-                if U > obj.u_max; U = obj.u_max; end
-                if U < obj.u_min; U = obj.u_min; end
-            end
-
-            % Shift history
-            obj.setpoint_trajec_km2 = obj.setpoint_trajec_km1;
-            obj.setpoint_trajec_km1 = sp_traj;
-            obj.error_km2           = obj.error_km1;
-            obj.error_km1           = err;
-            obj.estimator_num_km2   = obj.estimator_num_km1;
-            obj.estimator_num_km1   = Fnum;
-            obj.estimator_den_km2   = obj.estimator_den_km1;
-            obj.estimator_den_km1   = Fden;
-            obj.command_km1         = U;
+            u       = out.u;
+            F_hat   = out.F_hat;
+            sp_filt = out.sp_filt;
+            err     = out.err;
+            u_raw   = out.u_raw;
+            F_valid = double(out.est_valid);
         end
 
         function resetImpl(obj)
-            obj.setpoint_trajec_km1 = 0;
-            obj.setpoint_trajec_km2 = 0;
-            obj.error_km1           = 0;
-            obj.error_km2           = 0;
-            obj.estimator_num_km1   = 0;
-            obj.estimator_num_km2   = 0;
-            obj.estimator_den_km1   = 0;
-            obj.estimator_den_km2   = 0;
-            obj.command_km1         = 0;
+            if isempty(obj.cfg)
+                obj.cfg = buildConfig(obj);
+            end
+            unpackState(obj, mfc_siso_init(obj.cfg));
         end
 
-        function [sz, dt, cp] = getDiscreteStateSpecificationImpl(~, ~)
-            sz = [1 1];
+        function [sz, dt, cp] = getDiscreteStateSpecificationImpl(obj, name)
+            switch name
+                case {'y_buf', 'u_buf'}
+                    if strncmp(obj.estimator_type, 'Algebraic', 9)
+                        sz = [1 1];                       % unused placeholder
+                    else
+                        n  = obj.est_filter_window;
+                        n  = n + mod(n, 2);               % even (Simpson)
+                        sz = [n + 1, 1];
+                    end
+                otherwise
+                    sz = [1 1];
+            end
             dt = 'double';
             cp = false;
         end
 
         function sts = getSampleTimeImpl(obj)
+            % Fixed discrete rate (do NOT inherit): the per-sample recursions
+            % assume they advance exactly once per Ts.
             sts = createSampleTime(obj, 'Type', 'Discrete', 'SampleTime', obj.Ts);
         end
 
-        function [o1, o2, o3, o4] = getOutputSizeImpl(~)
-            o1 = [1 1];  o2 = [1 1];  o3 = [1 1];  o4 = [1 1];
-        end
-        function [o1, o2, o3, o4] = getOutputDataTypeImpl(~)
-            o1 = 'double';  o2 = 'double';  o3 = 'double';  o4 = 'double';
-        end
-        function [o1, o2, o3, o4] = isOutputComplexImpl(~)
-            o1 = false;  o2 = false;  o3 = false;  o4 = false;
-        end
-        function [o1, o2, o3, o4] = isOutputFixedSizeImpl(~)
-            o1 = true;  o2 = true;  o3 = true;  o4 = true;
+        % ---- Ports -------------------------------------------------------
+        function num = getNumInputsImpl(obj)
+            num = 3 + obj.use_external_command + obj.use_live_alpha;
         end
 
-        function num = getNumInputsImpl(~)
-            num = 3;
+        function varargout = getInputNamesImpl(obj)
+            names = {'y_sp', 'y_m', 't'};
+            if obj.use_external_command, names{end+1} = 'u_applied'; end
+            if obj.use_live_alpha,       names{end+1} = 'alpha';     end
+            varargout = names;
         end
 
-        function icon = getIconImpl(~)
-            icon = 'mfc\_siso\_core';
+        function num = getNumOutputsImpl(~)
+            num = 6;
+        end
+
+        function varargout = getOutputNamesImpl(~)
+            varargout = {'u', 'F_hat', 'sp_filt', 'err', 'u_raw', 'F_valid'};
+        end
+
+        function varargout = getOutputSizeImpl(obj)
+            varargout = repmat({[1 1]}, 1, getNumOutputsImpl(obj));
+        end
+        function varargout = getOutputDataTypeImpl(obj)
+            varargout = repmat({'double'}, 1, getNumOutputsImpl(obj));
+        end
+        function varargout = isOutputComplexImpl(obj)
+            varargout = repmat({false}, 1, getNumOutputsImpl(obj));
+        end
+        function varargout = isOutputFixedSizeImpl(obj)
+            varargout = repmat({true}, 1, getNumOutputsImpl(obj));
+        end
+
+        function icon = getIconImpl(obj)
+            if strncmp(obj.model_order, 'First', 5), o = '1st order'; else, o = '2nd order'; end
+            if strncmp(obj.controller_structure, 'Coupled', 7), s = 'coupled'; else, s = 'decoupled'; end
+            if strncmp(obj.estimator_type, 'Algebraic', 9), e = 'algebraic'; else, e = 'sliding window'; end
+            icon = sprintf('MFC SISO\n%s, %s\n%s', o, s, e);
+        end
+    end
+
+    methods (Static, Access = protected)
+        function header = getHeaderImpl
+            header = matlab.system.display.Header('mfc_siso_core', ...
+                'Title', 'MFC SISO Controller', ...
+                'Text', sprintf(['Model-Free Control SISO controller.\n\n', ...
+                    'Estimates the ultra-local model term F online and generates the ', ...
+                    'command u = (-F_hat + reference feedforward - feedback)/alpha. ', ...
+                    'Select the model order (first/second), the controller structure ', ...
+                    '(coupled: error-driven estimator with folded poles; decoupled: ', ...
+                    'measurement-driven estimator with explicit iP/iPD feedback) and ', ...
+                    'the estimator type (algebraic growing window, or sliding-window ', ...
+                    'Simpson quadrature -- decoupled only).\n\n', ...
+                    'Optional ports: u_applied feeds back the command that actually ', ...
+                    'reached the plant (e.g. after an external limiter or from a ', ...
+                    'measured actuator); alpha overrides the mask parameter live.']));
+        end
+
+        function groups = getPropertyGroupsImpl
+            variantSection = matlab.system.display.Section( ...
+                'Title', 'Algorithm variant', ...
+                'PropertyList', {'model_order', 'controller_structure', 'estimator_type'});
+            gainSection = matlab.system.display.Section( ...
+                'Title', 'Model and feedback gains', ...
+                'PropertyList', {'alpha', 'Kp', 'Kd', 'Ki'});
+            filterSection = matlab.system.display.Section( ...
+                'Title', 'Filters and estimator', ...
+                'PropertyList', {'ref_filter_window', 'est_filter_window', ...
+                                 'command_filter', 'est_hold_time', 'use_ref_filter'});
+            outputSection = matlab.system.display.Section( ...
+                'Title', 'Command saturation', ...
+                'PropertyList', {'use_control_sat', 'u_min', 'u_max'});
+            interfaceSection = matlab.system.display.Section( ...
+                'Title', 'Optional input ports', ...
+                'PropertyList', {'use_external_command', 'use_live_alpha'});
+            executionSection = matlab.system.display.Section( ...
+                'Title', 'Execution', ...
+                'PropertyList', {'Ts'});
+
+            groups = [ ...
+                matlab.system.display.SectionGroup('Title', 'Algorithm', ...
+                    'Sections', [variantSection, gainSection]), ...
+                matlab.system.display.SectionGroup('Title', 'Signal conditioning', ...
+                    'Sections', [filterSection, outputSection]), ...
+                matlab.system.display.SectionGroup('Title', 'Interface', ...
+                    'Sections', [interfaceSection, executionSection])];
         end
     end
 end
