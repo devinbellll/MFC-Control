@@ -9,7 +9,7 @@ addpath('examples');    % val_mfc, val_mfc_composed
 addpath('tests');
 addpath('models');
 addpath('scripts');
-addpath('models/plants/Darko/');
+addpath('models/plants/AC_1dof/');
 
 %%
 X=1;
