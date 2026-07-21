@@ -56,7 +56,7 @@ function [F_hat, state, dbg] = mfc_fhat_algebraic_first_order( ...
 %     dbg   : debug struct: num_raw, den_raw, num_filt, den_filt, valid
 %
 %   See also MFC_FHAT_ALGEBRAIC_SECOND_ORDER, MFC_FHAT_SLIDING_WINDOW,
-%   MFC_SISO_STEP.
+%   MFC_SISO.STEP.
 
 % Growing-window annihilator, discretized (backward differences)
 num_raw = -z + (t*z - (t - Ts)*state.z_km1)/Ts - t*alpha*u_prev - t*b_fold*z;

@@ -20,11 +20,16 @@ classdef mfc_siso_core < matlab.System
     %                          recursion) or Sliding window (fixed-length
     %                          Simpson-quadrature integral; decoupled only).
     %
-    %   The numerics live in plain, individually testable functions:
-    %   mfc_siso_step (per-sample law and dispatch), mfc_fhat_algebraic_
-    %   first/second_order, mfc_fhat_sliding_window, mfc_window_kernel and
-    %   mfc_iir_smoother. This class only maps mask parameters and Simulink
-    %   ports/states onto those functions.
+    %   The numerics live outside this class, in mfc_siso (per-sample law,
+    %   dispatch and the individual pipeline stages) and the plain estimator
+    %   functions mfc_fhat_algebraic_first/second_order,
+    %   mfc_fhat_sliding_window and mfc_iir_smoother. This class only maps
+    %   mask parameters and Simulink ports/states onto those functions.
+    %
+    %   This is the ASSEMBLED, all-in-one controller. To take the pipeline
+    %   apart -- to swap an estimator, move the smoothing, or probe an
+    %   intermediate signal -- use the individual stage blocks in blocks/
+    %   instead; they call the same mfc_siso stage methods this block does.
     %
     %   Command law (fold vs explicit is decided by coupled/decoupled alone;
     %   model order only selects the feedforward derivative order):
@@ -49,7 +54,7 @@ classdef mfc_siso_core < matlab.System
     %     Out: u, F_hat, sp_filt, err, u_raw (pre-filter/saturation command),
     %          F_valid (1 once the estimator is past its startup hold).
     %
-    %   See also mfc_siso_config, mfc_siso_step, mfc_siso_init.
+    %   See also mfc_siso (config/init/step and the pipeline stages).
 
     % ---- Algorithm variant (mask dropdowns) -----------------------------
     properties (Nontunable)
@@ -131,7 +136,7 @@ classdef mfc_siso_core < matlab.System
     end
 
     properties (Access = private)
-        cfg     % configuration struct built by mfc_siso_config in setupImpl
+        cfg     % configuration struct built by mfc_siso.config in setupImpl
     end
 
     methods
@@ -153,7 +158,7 @@ classdef mfc_siso_core < matlab.System
             else
                 estimator = 'sliding_window';
             end
-            cfg = mfc_siso_config( ...
+            cfg = mfc_siso.config( ...
                 'model_order',       order, ...
                 'structure',         structure, ...
                 'estimator',         estimator, ...
@@ -223,7 +228,7 @@ classdef mfc_siso_core < matlab.System
     methods (Access = protected)
 
         function validatePropertiesImpl(obj)
-            % mfc_siso_config validates gains and rejects the undefined
+            % mfc_siso.config validates gains and rejects the undefined
             % coupled + sliding-window combination, so mask errors surface
             % at once.
             buildConfig(obj);
@@ -259,7 +264,7 @@ classdef mfc_siso_core < matlab.System
             end
 
             state = packState(obj);
-            [out, state] = mfc_siso_step(setpoint, measure, t, u_prev, alpha_k, c, state);
+            [out, state] = mfc_siso.step(setpoint, measure, t, u_prev, alpha_k, c, state);
             unpackState(obj, state);
 
             u       = out.u;
@@ -271,10 +276,10 @@ classdef mfc_siso_core < matlab.System
         end
 
         function resetImpl(obj)
-            % Zero the state directly instead of via mfc_siso_init: code
+            % Zero the state directly instead of via mfc_siso.init: code
             % generation types the discrete states from these assignments,
             % so the buffers need a full-size zeros() with a codegen-constant
-            % length (mfc_siso_init sizes them from a run-time cfg value).
+            % length (mfc_siso.init sizes them from a run-time cfg value).
             n_buf = bufferLength(obj);
             obj.sp_filt_km1  = 0;
             obj.sp_filt_km2  = 0;

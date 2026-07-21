@@ -10,7 +10,7 @@ function [F_hat, state, dbg] = mfc_fhat_sliding_window(y, u_prev, alpha, t, kern
 %
 %   by evaluating a fixed-length weighted integral of the measurement and
 %   applied-input histories over the last Tw seconds (composite Simpson
-%   quadrature; see MFC_WINDOW_KERNEL for the exact formulas and why
+%   quadrature; see MFC_SISO.WINDOW_KERNEL for the exact formulas and why
 %   trapezoidal integration is not usable here):
 %
 %       F_hat = prefactor * (Ts/3) * sum( simpson_weights .* ...
@@ -32,7 +32,7 @@ function [F_hat, state, dbg] = mfc_fhat_sliding_window(y, u_prev, alpha, t, kern
 %     alpha  : ultra-local model input gain (may vary at run time; the
 %              alpha-independent kernel is precomputed)
 %     t      : current time [s], only used for the window-fill hold
-%     kernel : precomputed quadrature kernel from MFC_WINDOW_KERNEL
+%     kernel : precomputed quadrature kernel from MFC_SISO.WINDOW_KERNEL
 %     state  : struct, fields used/updated here:
 %                .y_buf [(n+1)x1] measurement window, newest last
 %                .u_buf [(n+1)x1] applied-input window, newest last
@@ -42,8 +42,8 @@ function [F_hat, state, dbg] = mfc_fhat_sliding_window(y, u_prev, alpha, t, kern
 %     state : updated state struct
 %     dbg   : debug struct: integral (before prefactor), valid
 %
-%   See also MFC_WINDOW_KERNEL, MFC_FHAT_ALGEBRAIC_FIRST_ORDER,
-%   MFC_FHAT_ALGEBRAIC_SECOND_ORDER, MFC_SISO_STEP.
+%   See also MFC_SISO.WINDOW_KERNEL, MFC_FHAT_ALGEBRAIC_FIRST_ORDER,
+%   MFC_FHAT_ALGEBRAIC_SECOND_ORDER, MFC_SISO.STEP.
 
 % Slide the window buffers (newest sample last). circshift + end-assignment
 % instead of [buf(2:end); new]: identical result, but also valid for the 1x1

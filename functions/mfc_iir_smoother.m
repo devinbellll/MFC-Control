@@ -23,7 +23,7 @@ function x_filt = mfc_iir_smoother(x_raw, x_filt_km1, x_filt_km2, window)
 %     window      : W >= 0, memory in samples
 %
 %   See also MFC_FHAT_ALGEBRAIC_FIRST_ORDER, MFC_FHAT_ALGEBRAIC_SECOND_ORDER,
-%   MFC_SISO_STEP.
+%   MFC_SISO.STEP.
 
 x_filt = (x_raw + (2*window^2 + 2*window)*x_filt_km1 - window^2*x_filt_km2) ...
          / (window^2 + 2*window + 1);

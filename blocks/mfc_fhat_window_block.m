@@ -1,0 +1,195 @@
+classdef mfc_fhat_window_block < matlab.System
+    % mfc_fhat_window_block  Sliding-window (Simpson quadrature) F estimator.
+    %
+    %   Estimates F in the ultra-local model
+    %
+    %       dot_y  = F + alpha*u      (model_order = 1, Eq. 11)
+    %       ddot_y = F + alpha*u      (model_order = 2, Eq. 16)
+    %
+    %   by evaluating a FIXED-LENGTH weighted integral of the measurement
+    %   and applied-input histories over the last Tw seconds:
+    %
+    %       F_hat = prefactor * (Ts/3) * sum( simpson_weights .*
+    %                 ( y_kernel .* y_buf + alpha * u_kernel_unit .* u_buf ) )
+    %
+    %   DECOUPLED BY CONSTRUCTION. This estimator sees only (y, u, alpha) --
+    %   never the tracking error -- so F_hat is always the TRUE plant lumped
+    %   dynamics and there is nothing to fold. It has no coupled mode and no
+    %   a_fold/b_fold: stabilize with an explicit mfc_feedback_block.
+    %
+    %   Unlike the algebraic estimators it has finite memory and no growing
+    %   time weights, so it is INSENSITIVE to the choice of time origin --
+    %   t is used only to hold the output at zero until the window fills.
+    %   That makes it the right choice for a long or restarting run.
+    %
+    %   It also has no internal smoothing at all. If the estimate is noisy,
+    %   follow it with an mfc_smoother_block on F_hat.
+    %
+    %   QUADRATURE: composite Simpson, so window_samples is rounded UP to
+    %   even and the realized window is Tw = n_intervals*Ts. Trapezoidal
+    %   integration is not usable at second order -- the 60/Tw^5 prefactor
+    %   amplifies its leakage to a ~60x error at practical sample times.
+    %
+    %   Ports
+    %     In : y, u_prev, t  (+ optional alpha)
+    %     Out: F_hat, valid  (+ optional integral, the pre-prefactor sum)
+    %
+    %   The math is mfc_fhat_sliding_window with a kernel precomputed once
+    %   by mfc_siso.window_kernel in setupImpl; this class only maps
+    %   parameters and Simulink state onto them.
+    %
+    %   See also mfc_fhat_sliding_window, mfc_siso, mfc_fhat_alg2_block,
+    %   mfc_smoother_block, mfc_siso_core.
+
+    properties
+        % alpha Ultra-local model input gain (ignored if the live alpha input is enabled)
+        alpha = 1
+    end
+
+    properties (Nontunable)
+        % model_order Order of the ultra-local model
+        model_order = 'Second order (ddot_y = F + alpha*u)'
+        % Ts Sample time [s] (fixes the block's discrete rate)
+        Ts = 0.01
+        % window_samples Window length [samples], rounded up to even for Simpson. Nontunable: sizes the buffers and the kernel.
+        window_samples = 10
+    end
+
+    properties (Hidden, Constant)
+        model_orderSet = matlab.system.StringSet({ ...
+            'First order (dot_y = F + alpha*u)', ...
+            'Second order (ddot_y = F + alpha*u)'});
+    end
+
+    properties (Nontunable, Logical)
+        % expose_integral Add the raw integral output port (before the prefactor)
+        expose_integral = false
+        % use_live_alpha Add the alpha input port (overrides the alpha parameter)
+        use_live_alpha = false
+    end
+
+    properties (DiscreteState)
+        y_buf
+        u_buf
+    end
+
+    properties (Access = private)
+        kernel     % quadrature kernel built by mfc_siso.window_kernel in setupImpl
+    end
+
+    methods
+        function obj = mfc_fhat_window_block(varargin)
+            setProperties(obj, nargin, varargin{:});
+        end
+    end
+
+    methods (Access = private)
+        function n = orderNum(obj)
+            if strncmp(obj.model_order, 'First', 5), n = 1; else, n = 2; end
+        end
+
+        function n_buf = bufferLength(obj)
+            % Shared by resetImpl and getDiscreteStateSpecificationImpl so
+            % the sizes cannot diverge. Built only from Nontunable
+            % properties, so it is a compile-time constant under codegen.
+            n     = obj.window_samples;
+            n     = n + mod(n, 2);                % even (Simpson)
+            n_buf = n + 1;
+        end
+    end
+
+    methods (Access = protected)
+
+        function setupImpl(obj)
+            obj.kernel = mfc_siso.window_kernel(orderNum(obj), obj.window_samples, obj.Ts);
+        end
+
+        function varargout = stepImpl(obj, y, u_prev, t, varargin)
+            if obj.use_live_alpha
+                alpha_k = varargin{1};
+            else
+                alpha_k = obj.alpha;
+            end
+
+            state = struct('y_buf', obj.y_buf, 'u_buf', obj.u_buf);
+            [F_hat, state, dbg] = mfc_fhat_sliding_window( ...
+                y, u_prev, alpha_k, t, obj.kernel, state);
+            obj.y_buf = state.y_buf;
+            obj.u_buf = state.u_buf;
+
+            varargout{1} = F_hat;
+            varargout{2} = double(dbg.valid);
+            if obj.expose_integral
+                varargout{3} = dbg.integral;
+            end
+        end
+
+        function resetImpl(obj)
+            % Full-size zeros() with a codegen-constant length: code
+            % generation types the discrete states from these assignments.
+            n_buf = bufferLength(obj);
+            obj.y_buf = zeros(n_buf, 1);
+            obj.u_buf = zeros(n_buf, 1);
+        end
+
+        function [sz, dt, cp] = getDiscreteStateSpecificationImpl(obj, ~)
+            sz = [bufferLength(obj), 1];  dt = 'double';  cp = false;
+        end
+
+        function sts = getSampleTimeImpl(obj)
+            % Fixed discrete rate (do NOT inherit): the window buffers
+            % assume they shift exactly once per Ts.
+            sts = createSampleTime(obj, 'Type', 'Discrete', 'SampleTime', obj.Ts);
+        end
+
+        % ---- Ports -------------------------------------------------------
+        function num = getNumInputsImpl(obj), num = 3 + obj.use_live_alpha; end
+        function varargout = getInputNamesImpl(obj)
+            names = {'y', 'u_prev', 't'};
+            if obj.use_live_alpha, names{end+1} = 'alpha'; end
+            varargout = names;
+        end
+
+        function num = getNumOutputsImpl(obj), num = 2 + obj.expose_integral; end
+        function varargout = getOutputNamesImpl(obj)
+            if obj.expose_integral
+                varargout = {'F_hat', 'valid', 'integral'};
+            else
+                varargout = {'F_hat', 'valid'};
+            end
+        end
+        function varargout = getOutputSizeImpl(obj)
+            varargout = repmat({[1 1]}, 1, getNumOutputsImpl(obj));
+        end
+        function varargout = getOutputDataTypeImpl(obj)
+            varargout = repmat({'double'}, 1, getNumOutputsImpl(obj));
+        end
+        function varargout = isOutputComplexImpl(obj)
+            varargout = repmat({false}, 1, getNumOutputsImpl(obj));
+        end
+        function varargout = isOutputFixedSizeImpl(obj)
+            varargout = repmat({true}, 1, getNumOutputsImpl(obj));
+        end
+
+        function icon = getIconImpl(obj)
+            n = obj.window_samples + mod(obj.window_samples, 2);
+            icon = sprintf('F-hat window\n%d order, Simpson\nTw = %g s', ...
+                           orderNum(obj), n*obj.Ts);
+        end
+    end
+
+    methods (Static, Access = protected)
+        function header = getHeaderImpl
+            header = matlab.system.display.Header('mfc_fhat_window_block', ...
+                'Title', 'MFC F-hat: sliding window', ...
+                'Text', sprintf(['Fixed-length Simpson-quadrature estimator for ', ...
+                    'dot_y = F + alpha*u (1st order) or ddot_y = F + alpha*u (2nd).\n\n', ...
+                    'Decoupled by construction: it never sees the tracking error, so ', ...
+                    'F_hat is the true plant lumped dynamics and an explicit feedback ', ...
+                    'block is required. Insensitive to the time origin (unlike the ', ...
+                    'algebraic estimators) -- t only holds the output until the window ', ...
+                    'fills.\n\nNo internal smoothing: add an mfc_smoother_block on F_hat ', ...
+                    'if the estimate is noisy. window_samples is rounded up to even.']));
+        end
+    end
+end

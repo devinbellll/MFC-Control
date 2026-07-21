@@ -1,112 +1,170 @@
-% octave_sanity.m  --  MATLAB-free sanity check for the sliding-window F estimators.
+function octave_sanity()
+%OCTAVE_SANITY Estimator and smoother math vs analytically known answers.
 %
-%   Run:  octave --no-gui -q tests/octave_sanity.m
-%         (also runs in MATLAB: >> run tests/octave_sanity.m)
+%   octave --no-gui -q tests/octave_sanity.m     (also runs in MATLAB)
 %
-%   Octave cannot instantiate matlab.System, so this file re-implements the
-%   ESTIMATOR MATH that lives in functions/mfc_siso_non_algebraic.m (the
-%   use_first_order=true/false branches of the estimator block of stepImpl)
-%   and checks it against plants with an analytically known F. It is the
-%   CI-friendly guard on the kernels / signs. For a test of the actual System
-%   objects in MATLAB, use tests/test_estimators.m instead.
+%   Checks the numerics against plants whose F is known in closed form:
+%   feed each estimator the EXACT sampled signals of a plant built to have a
+%   chosen F, and demand it recovers that F with the right magnitude AND the
+%   right sign.
 %
-%   IMPORTANT: if you change the estimator formula in the source, mirror the
-%   change in est1/est2 below. The asserts (constant-F recovery, sinusoid
-%   tracking, and POSITIVE-sign correlation) will catch the historical bugs:
-%     - 2nd order prefactor sign (-60/T^5 returns -F)
-%     - 1st order u-term sign  (- u_kernel returns F + extra*u)
+%   This file used to carry its own hand-written copy of the estimator math
+%   because the algorithms lived inside matlab.System classes that Octave
+%   cannot instantiate. They now live in plain functions, so it calls the
+%   REAL code -- there is no second copy to keep in sync any more.
+%
+%   Sign guards. Two historical bugs are pinned here explicitly:
+%     - 2nd-order sliding-window prefactor: -60/Tw^5 returns -F
+%     - 1st-order sliding-window input term: a negated u kernel returns
+%       F + (extra)*u
+%   Both show up as a sign flip, not a magnitude error, so every check below
+%   asserts the sign separately from the tolerance.
+%
+%   See also TEST_GOLDEN, TEST_COMPOSED, TEST_ESTIMATORS.
 
-1;
+here = fileparts(mfilename('fullpath'));
+addpath(fullfile(here, '..', 'functions'));
 
-% ---- estimator math, must match functions/*_F_estimator.m stepImpl ----
-function w = simpweights(N)   % composite Simpson (N even): 1 4 2 .. 4 1
-  w = ones(N+1,1); w(2:2:end-1) = 4; w(3:2:end-1) = 2;
+global N_PASS N_FAIL;  N_PASS = 0;  N_FAIL = 0;
+Ts = 1e-3;
+
+% =====================================================================
+% 1) mfc_iir_smoother: pass-through and unity DC gain
+% =====================================================================
+check('smoother: W=0 is an exact pass-through', ...
+      mfc_iir_smoother(3.7, 1.1, 2.2, 0) == 3.7);
+
+x1 = 0; x2 = 0;                       % settle a constant through the filter
+for k = 1:2000
+    xf = mfc_iir_smoother(5, x1, x2, 10);  x2 = x1;  x1 = xf;
 end
+check(sprintf('smoother: unity DC gain (settled %.10f vs 5)', x1), abs(x1 - 5) < 1e-9);
 
-function [F, st] = est1(ym, u, alpha, T, Ts, st)   % mfc_siso_non_algebraic, use_first_order=true (Eq.11)
-  if isempty(st)
-    N=round(T/Ts); N=N+mod(N,2); st.Tw=N*Ts;       % even intervals (Simpson)
-    st.sig=(0:N)'*Ts; st.yk=st.Tw-2*st.sig; st.w=simpweights(N);
-    st.y=zeros(N+1,1); st.u=st.y;
-  end
-  st.y=[st.y(2:end);ym]; st.u=[st.u(2:end);u];
-  uk = alpha.*st.sig.*(st.Tw-st.sig);
-  F  = (-6/st.Tw^3)*(Ts/3)*sum(st.w.*(st.yk.*st.y + uk.*st.u));   % +uk.*u, Simpson
+x1 = 0; x2 = 0;                       % monotone, no overshoot (critically damped)
+prev = -inf;  mono = true;
+for k = 1:400
+    xf = mfc_iir_smoother(1, x1, x2, 10);  x2 = x1;  x1 = xf;
+    mono = mono && (xf >= prev - 1e-15) && (xf <= 1 + 1e-12);
+    prev = xf;
 end
+check('smoother: step response monotone, no overshoot', mono);
 
-function [F, st] = est2(ym, u, alpha, T, Ts, st)   % mfc_siso_non_algebraic, use_first_order=false (Eq.16)
-  if isempty(st)
-    N=round(T/Ts); N=N+mod(N,2); st.Tw=N*Ts;       % even intervals (Simpson)
-    st.sig=(0:N)'*Ts; st.yk=st.Tw^2-6*st.Tw*st.sig+6*st.sig.^2; st.w=simpweights(N);
-    st.y=zeros(N+1,1); st.u=st.y;
-  end
-  st.y=[st.y(2:end);ym]; st.u=[st.u(2:end);u];
-  uk = (alpha/2).*st.sig.^2.*(st.Tw-st.sig).^2;
-  F  = (60/st.Tw^5)*(Ts/3)*sum(st.w.*(st.yk.*st.y - uk.*st.u));   % +60/T^5, Simpson
-end
+% =====================================================================
+% 2) Sliding window, 2nd order: ddot_y = F + alpha*u
+%    y = 0.5*a*t^2  =>  ddot_y = a  =>  F_true = a - alpha*u0
+% =====================================================================
+% u0 chosen so F_true is comfortably non-zero: a sign check against F_true = 0
+% would be vacuous. Tolerance is 1e-3, not eps: the 2nd-order integrand is
+% y_kernel (quadratic) x y (quadratic) = quartic, and Simpson is exact only
+% through cubics, so a small quadrature residual is expected and correct.
+a = 3; alpha = 2; u0 = 0.5;  Ftrue = a - alpha*u0;
+F = run_window(2, 40, Ts, alpha, @(tt) 0.5*a*tt.^2, u0);
+check(sprintf('window 2nd: F=%.6f vs true %.6f', F, Ftrue), abs(F - Ftrue) < 1e-3);
+check('window 2nd: F sign correct (guards -60/Tw^5)', sign(F) == sign(Ftrue));
 
-% ---- tiny test harness ----
-global N_PASS N_FAIL; N_PASS=0; N_FAIL=0;
-function check(name, cond)
-  global N_PASS N_FAIL;
-  if cond, N_PASS++; printf('  PASS  %s\n', name);
-  else      N_FAIL++; printf('  FAIL  %s\n', name); end
-end
+a = 3; alpha = 2; u0 = 3;  Ftrue = a - alpha*u0;      % force F_true < 0
+F = run_window(2, 40, Ts, alpha, @(tt) 0.5*a*tt.^2, u0);
+check(sprintf('window 2nd: negative F=%.6f vs true %.6f', F, Ftrue), abs(F - Ftrue) < 1e-3);
+check('window 2nd: negative F sign correct', F < 0);
 
-% Fine Ts so the trapezoidal quadrature is accurate and the precision
-% tolerances below are meaningful (the 2nd-order estimate of a 2nd derivative
-% needs a well-resolved window). Sign guards below catch the historical bugs
-% regardless of Ts.
-Ts=1e-4; alpha=2;
+% =====================================================================
+% 3) Sliding window, 1st order: dot_y = F + alpha*u
+%    y = v*t  =>  dot_y = v  =>  F_true = v - alpha*u0
+% =====================================================================
+% 1st order: y_kernel (linear) x y (linear) = quadratic, which Simpson
+% integrates exactly -- hence the much tighter tolerance than 2nd order.
+v = 4; alpha = 2; u0 = 0.5;  Ftrue = v - alpha*u0;
+F = run_window(1, 40, Ts, alpha, @(tt) v*tt, u0);
+check(sprintf('window 1st: F=%.6f vs true %.6f', F, Ftrue), abs(F - Ftrue) < 1e-6);
+check('window 1st: F sign correct (guards the u-kernel sign)', sign(F) == sign(Ftrue));
 
-% ===== TEST 1: constant true F recovered (sign + scale) =====
-% plant fed consistently: ydot/yddot = F0 + alpha*u0  ->  F = F0
-printf('Constant-F recovery (true F = 3):\n');
-T=0.1; F0=3; u0=1.5; t=0:Ts:1.5; u=u0*ones(size(t));
-y1=(F0+alpha*u0)*t; y2=0.5*(F0+alpha*u0)*t.^2;
-s1=[];s2=[];F1=0;F2=0;
-for k=1:numel(t)
-  [F1,s1]=est1(y1(k),u(k),alpha,T,Ts,s1);
-  [F2,s2]=est2(y2(k),u(k),alpha,T,Ts,s2);
-end
-check(sprintf('1st order recovers F=3 (got %.3f)',F1), abs(F1-3) < 0.05);
-check(sprintf('2nd order recovers F=3 (got %.3f)',F2), abs(F2-3) < 0.25);  % residual = trapz leakage on unbounded ramp
-check('2nd order has CORRECT sign (not -F)', F2 > 0);
+v = 1; alpha = 2; u0 = 3;  Ftrue = v - alpha*u0;      % force F_true < 0
+F = run_window(1, 40, Ts, alpha, @(tt) v*tt, u0);
+check(sprintf('window 1st: negative F=%.6f vs true %.6f', F, Ftrue), abs(F - Ftrue) < 1e-6);
 
-% ===== TEST 2: slow-varying F tracked with positive correlation =====
-printf('Slow-sinusoid tracking:\n');
-w0=0.5; t=0:Ts:3;
-y=sin(w0*t); yd=w0*cos(w0*t); ydd=-w0^2*sin(w0*t); u=cos(w0*t);
-F1t=yd-alpha*u; F2t=ydd-alpha*u;
-s1=[];s2=[];F1=zeros(size(t));F2=zeros(size(t));
-for k=1:numel(t)
-  [F1(k),s1]=est1(y(k),u(k),alpha,T,Ts,s1);
-  [F2(k),s2]=est2(y(k),u(k),alpha,T,Ts,s2);
-end
-m=t>0.5;
-c1=corr(F1(m)',F1t(m)'); c2=corr(F2(m)',F2t(m)');
-check(sprintf('1st order corr=%.4f > 0.99',c1), c1 > 0.99);
-check(sprintf('2nd order corr=%.4f > 0.99',c2), c2 > 0.99);
-check('2nd order corr POSITIVE (sign guard)', c2 > 0);
-check(sprintf('1st order max|err|=%.4g < 0.05',max(abs(F1(m)-F1t(m)))), max(abs(F1(m)-F1t(m)))<0.05);
-check(sprintf('2nd order max|err|=%.4g < 0.25',max(abs(F2(m)-F2t(m)))), max(abs(F2(m)-F2t(m)))<0.25);
+% =====================================================================
+% 4) Algebraic estimators, decoupled (no folding), constant F
+%    Backward-difference discretization, so O(Ts) error is expected.
+% =====================================================================
+a = 3; alpha = 2; u0 = 0.5;  Ftrue = a - alpha*u0;
+F = run_alg(2, Ts, alpha, @(tt) 0.5*a*tt.^2, u0);
+check(sprintf('algebraic 2nd: F=%.4f vs true %.4f', F, Ftrue), abs(F - Ftrue) < 2e-2);
+check('algebraic 2nd: F sign correct', sign(F) == sign(Ftrue));
 
-% ===== TEST 3: COARSE Ts guard (Simpson vs trapezoidal regression) =====
-% At Ts=0.01, T=0.1 the trapezoidal rule gave ~60x error on the 2nd-order
-% estimate (F approx +17 instead of -1). Simpson must recover F here.
-printf('Coarse-Ts robustness (Ts=0.01, T=0.1, constant true F=3):\n');
-Tsc=0.01; Tc=0.1; tc=0:Tsc:2; uc=u0*ones(size(tc));
-y1c=(F0+alpha*u0)*tc; y2c=0.5*(F0+alpha*u0)*tc.^2;
-s1=[];s2=[];G1=0;G2=0;
-for k=1:numel(tc)
-  [G1,s1]=est1(y1c(k),uc(k),alpha,Tc,Tsc,s1);
-  [G2,s2]=est2(y2c(k),uc(k),alpha,Tc,Tsc,s2);
-end
-check(sprintf('1st order @Ts=0.01 recovers F=3 (got %.3f)',G1), abs(G1-3) < 0.05);
-check(sprintf('2nd order @Ts=0.01 recovers F=3 (got %.3f)',G2), abs(G2-3) < 0.1);
+v = 4; alpha = 2; u0 = 0.5;  Ftrue = v - alpha*u0;
+F = run_alg(1, Ts, alpha, @(tt) v*tt, u0);
+check(sprintf('algebraic 1st: F=%.4f vs true %.4f', F, Ftrue), abs(F - Ftrue) < 1e-2);
+check('algebraic 1st: F sign correct', sign(F) == sign(Ftrue));
 
-% ===== summary =====
-printf('\n%d passed, %d failed\n', N_PASS, N_FAIL);
+% =====================================================================
+% 5) Cross-check: the two estimator families must agree on the same plant
+% =====================================================================
+a = 3; alpha = 2; u0 = 0.5;  Ftrue = a - alpha*u0;
+Fw = run_window(2, 40, Ts, alpha, @(tt) 0.5*a*tt.^2, u0);
+Fa = run_alg(2, Ts, alpha, @(tt) 0.5*a*tt.^2, u0);
+check(sprintf('2nd order: window %.4f vs algebraic %.4f agree (both -> %.1f)', Fw, Fa, Ftrue), ...
+      abs(Fw - Fa) < 2e-2 && abs(Fw - Ftrue) < 2e-2);
+
+% =====================================================================
+% 6) Startup hold: both families must output exactly 0 before they are valid
+% =====================================================================
+st = zero_state(1);
+[F0, ~, dbg0] = mfc_fhat_algebraic_second_order(1, 1, 1, 0, Ts, 10, 0.1, 0, 0, st);
+check('algebraic: F is exactly 0 during the startup hold', F0 == 0 && ~dbg0.valid);
+
+kern = mfc_siso.window_kernel(2, 40, Ts);
+stw  = struct('y_buf', zeros(kern.n_intervals+1, 1), 'u_buf', zeros(kern.n_intervals+1, 1));
+[Fw0, ~, dbgw] = mfc_fhat_sliding_window(1, 1, 1, 0, kern, stw);
+check('window: F is exactly 0 while the window fills', Fw0 == 0 && ~dbgw.valid);
+
+fprintf('\n%d passed, %d failed\n', N_PASS, N_FAIL);
 if N_FAIL > 0
-  error('octave_sanity: %d test(s) failed', N_FAIL);
+    error('octave_sanity: %d check(s) failed', N_FAIL);
+end
+end
+
+% ===== helpers =====
+
+function check(name, cond)
+    global N_PASS N_FAIL;
+    if cond
+        N_PASS = N_PASS + 1;  fprintf('  PASS  %s\n', name);
+    else
+        N_FAIL = N_FAIL + 1;  fprintf('  FAIL  %s\n', name);
+    end
+end
+
+function st = zero_state(n_buf)
+    st = struct('z_km1', 0, 'z_km2', 0, ...
+                'num_filt_km1', 0, 'num_filt_km2', 0, ...
+                'den_filt_km1', 0, 'den_filt_km2', 0, ...
+                'y_buf', zeros(n_buf, 1), 'u_buf', zeros(n_buf, 1));
+end
+
+function F = run_window(order, win, Ts, alpha, yfun, u0)
+% Drive the sliding-window estimator with exact samples of yfun and a
+% constant input, long enough for the window to fill, and return the final F.
+    kern = mfc_siso.window_kernel(order, win, Ts);
+    st   = struct('y_buf', zeros(kern.n_intervals+1, 1), ...
+                  'u_buf', zeros(kern.n_intervals+1, 1));
+    N = round(4*kern.Tw/Ts);
+    for k = 1:N
+        t = (k-1)*Ts;
+        [F, st] = mfc_fhat_sliding_window(yfun(t), u0, alpha, t, kern, st);
+    end
+end
+
+function F = run_alg(order, Ts, alpha, yfun, u0)
+% Drive an algebraic estimator (decoupled: no folding) with exact samples of
+% yfun and a constant input, and return the final F.
+    st = zero_state(1);
+    N  = 4000;
+    for k = 1:N
+        t = (k-1)*Ts;
+        if order == 2
+            [F, st] = mfc_fhat_algebraic_second_order(yfun(t), u0, alpha, t, Ts, 10, 0.1, 0, 0, st);
+        else
+            [F, st] = mfc_fhat_algebraic_first_order(yfun(t), u0, alpha, t, Ts, 10, 0.1, 0, st);
+        end
+    end
 end

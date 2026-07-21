@@ -62,7 +62,7 @@ function [F_hat, state, dbg] = mfc_fhat_algebraic_second_order( ...
 %     dbg   : debug struct: num_raw, den_raw, num_filt, den_filt, valid
 %
 %   See also MFC_FHAT_ALGEBRAIC_FIRST_ORDER, MFC_FHAT_SLIDING_WINDOW,
-%   MFC_SISO_STEP.
+%   MFC_SISO.STEP.
 
 % Operational-calculus terms, discretized (backward differences)
 s_dz   = -(t*z - (t - Ts)*state.z_km1) / Ts;
