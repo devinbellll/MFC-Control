@@ -13,8 +13,11 @@ function x_filt = mfc_iir_smoother(x_raw, x_filt_km1, x_filt_km2, window)
 %   z = W/(W+1), i.e. a time constant of roughly W samples.
 %
 %   Used for:
-%     * the reference trajectory filter of the MFC controller, and
-%     * the numerator/denominator smoothing of the algebraic F estimators.
+%     * the reference trajectory filter of the MFC controller (block
+%       mfc_smoother_block), and
+%     * the numerator/denominator smoothing INSIDE the algebraic F
+%       estimators, where both must share one window to keep the ratio
+%       unbiased -- which is why it is not exposed as separate blocks.
 %
 %   Inputs
 %     x_raw       : current raw sample

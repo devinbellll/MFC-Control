@@ -14,8 +14,10 @@ classdef mfc_fhat_window_block < matlab.System
     %
     %   DECOUPLED BY CONSTRUCTION. This estimator sees only (y, u, alpha) --
     %   never the tracking error -- so F_hat is always the TRUE plant lumped
-    %   dynamics and there is nothing to fold. It has no coupled mode and no
-    %   a_fold/b_fold: stabilize with an explicit mfc_feedback_block.
+    %   dynamics and there is nothing to fold. There is no coupled variant
+    %   of this block, and there cannot be one: stabilize with an explicit
+    %   feedback law (a stock Discrete PID on the tracking error) into the
+    %   fb input of mfc_command_block.
     %
     %   Unlike the algebraic estimators it has finite memory and no growing
     %   time weights, so it is INSENSITIVE to the choice of time origin --
@@ -31,15 +33,22 @@ classdef mfc_fhat_window_block < matlab.System
     %   amplifies its leakage to a ~60x error at practical sample times.
     %
     %   Ports
-    %     In : y, u_prev, t  (+ optional alpha)
-    %     Out: F_hat, valid  (+ optional integral, the pre-prefactor sum)
+    %     In : y       plant measurement
+    %          u_prev  command that actually reached the plant over the LAST
+    %                  sample; in a loop assembled from separate blocks this
+    %                  must come through an explicit unit delay
+    %          t       clock (only used to hold the output until the window
+    %                  fills -- unlike the algebraic blocks, the estimate
+    %                  itself does not depend on the time origin)
+    %          alpha   optional live gain (overrides the mask parameter)
+    %     Out: F_hat
     %
     %   The math is mfc_fhat_sliding_window with a kernel precomputed once
     %   by mfc_siso.window_kernel in setupImpl; this class only maps
     %   parameters and Simulink state onto them.
     %
-    %   See also mfc_fhat_sliding_window, mfc_siso, mfc_fhat_alg2_block,
-    %   mfc_smoother_block, mfc_siso_core.
+    %   See also mfc_fhat_sliding_window, mfc_siso,
+    %   mfc_fhat_alg2_decoupled_block, mfc_smoother_block, mfc_siso_core.
 
     properties
         % alpha Ultra-local model input gain (ignored if the live alpha input is enabled)
@@ -62,8 +71,6 @@ classdef mfc_fhat_window_block < matlab.System
     end
 
     properties (Nontunable, Logical)
-        % expose_integral Add the raw integral output port (before the prefactor)
-        expose_integral = false
         % use_live_alpha Add the alpha input port (overrides the alpha parameter)
         use_live_alpha = false
     end
@@ -104,7 +111,7 @@ classdef mfc_fhat_window_block < matlab.System
             obj.kernel = mfc_siso.window_kernel(orderNum(obj), obj.window_samples, obj.Ts);
         end
 
-        function varargout = stepImpl(obj, y, u_prev, t, varargin)
+        function F_hat = stepImpl(obj, y, u_prev, t, varargin)
             if obj.use_live_alpha
                 alpha_k = varargin{1};
             else
@@ -112,16 +119,10 @@ classdef mfc_fhat_window_block < matlab.System
             end
 
             state = struct('y_buf', obj.y_buf, 'u_buf', obj.u_buf);
-            [F_hat, state, dbg] = mfc_fhat_sliding_window( ...
+            [F_hat, state] = mfc_fhat_sliding_window( ...
                 y, u_prev, alpha_k, t, obj.kernel, state);
             obj.y_buf = state.y_buf;
             obj.u_buf = state.u_buf;
-
-            varargout{1} = F_hat;
-            varargout{2} = double(dbg.valid);
-            if obj.expose_integral
-                varargout{3} = dbg.integral;
-            end
         end
 
         function resetImpl(obj)
@@ -150,26 +151,12 @@ classdef mfc_fhat_window_block < matlab.System
             varargout = names;
         end
 
-        function num = getNumOutputsImpl(obj), num = 2 + obj.expose_integral; end
-        function varargout = getOutputNamesImpl(obj)
-            if obj.expose_integral
-                varargout = {'F_hat', 'valid', 'integral'};
-            else
-                varargout = {'F_hat', 'valid'};
-            end
-        end
-        function varargout = getOutputSizeImpl(obj)
-            varargout = repmat({[1 1]}, 1, getNumOutputsImpl(obj));
-        end
-        function varargout = getOutputDataTypeImpl(obj)
-            varargout = repmat({'double'}, 1, getNumOutputsImpl(obj));
-        end
-        function varargout = isOutputComplexImpl(obj)
-            varargout = repmat({false}, 1, getNumOutputsImpl(obj));
-        end
-        function varargout = isOutputFixedSizeImpl(obj)
-            varargout = repmat({true}, 1, getNumOutputsImpl(obj));
-        end
+        function num = getNumOutputsImpl(~), num = 1; end
+        function varargout = getOutputNamesImpl(~),    varargout = {'F_hat'}; end
+        function varargout = getOutputSizeImpl(~),     varargout = {[1 1]}; end
+        function varargout = getOutputDataTypeImpl(~), varargout = {'double'}; end
+        function varargout = isOutputComplexImpl(~),   varargout = {false}; end
+        function varargout = isOutputFixedSizeImpl(~), varargout = {true}; end
 
         function icon = getIconImpl(obj)
             n = obj.window_samples + mod(obj.window_samples, 2);
@@ -186,7 +173,8 @@ classdef mfc_fhat_window_block < matlab.System
                     'dot_y = F + alpha*u (1st order) or ddot_y = F + alpha*u (2nd).\n\n', ...
                     'Decoupled by construction: it never sees the tracking error, so ', ...
                     'F_hat is the true plant lumped dynamics and an explicit feedback ', ...
-                    'block is required. Insensitive to the time origin (unlike the ', ...
+                    'law (a stock Discrete PID into the command block''s fb input) is ', ...
+                    'required. Insensitive to the time origin (unlike the ', ...
                     'algebraic estimators) -- t only holds the output until the window ', ...
                     'fills.\n\nNo internal smoothing: add an mfc_smoother_block on F_hat ', ...
                     'if the estimate is noisy. window_samples is rounded up to even.']));

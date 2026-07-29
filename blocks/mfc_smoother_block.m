@@ -1,29 +1,31 @@
 classdef mfc_smoother_block < matlab.System
-    % mfc_smoother_block  Second-order IIR smoother (MFC pipeline stage 1).
+    % mfc_smoother_block  Second-order IIR smoother.
     %
     %   Unity-DC-gain, critically damped, second-order IIR low-pass with a
     %   repeated real pole at z = W/(W+1), i.e. a memory of roughly W
     %   samples. W = 0 is an exact pass-through.
     %
-    %   ONE BLOCK, FOUR ROLES. This is deliberately the same class wherever
-    %   the MFC pipeline smooths a signal, so changing the smoother math is
-    %   a single edit that propagates everywhere:
+    %   TWO ROLES, one class, so changing the smoother math is a single edit
+    %   that propagates everywhere:
     %     1. reference trajectory filter (the "input smoother") -- enable
     %        the derivative outputs to get the feedforward dot_sp/ddot_sp
-    %     2. algebraic estimator NUMERATOR filter   (dissected mode)
-    %     3. algebraic estimator DENOMINATOR filter (dissected mode)
-    %     4. F_hat post-filter -- mainly useful after mfc_fhat_window_block,
+    %        for mfc_command_block
+    %     2. F_hat post-filter -- mainly useful after mfc_fhat_window_block,
     %        which has no internal smoothing of its own
     %
-    %   Roles 2 and 3 must use the SAME window: the algebraic estimators
-    %   divide numerator by denominator, and only identical smoothing of
-    %   both leaves the ratio unbiased.
+    %   The algebraic estimators smooth their own numerator and denominator
+    %   internally (with a single shared window, which is what keeps the
+    %   ratio unbiased); that is not something you wire up out here.
     %
     %   Ports
     %     In : x
     %     Out: x_filt, and (optional) dot_x, ddot_x -- backward finite
     %          differences of the FILTERED signal history, so they are the
     %          derivatives of what actually leaves the block.
+    %
+    %   W = 0 is an exact pass-through, so there is no separate enable
+    %   flag: bypassing the filter and setting the window to zero are the
+    %   same thing.
     %
     %   The math is mfc_siso.ref_traj / mfc_iir_smoother; this class only
     %   maps parameters and Simulink state onto them.
@@ -41,8 +43,6 @@ classdef mfc_smoother_block < matlab.System
     end
 
     properties (Nontunable, Logical)
-        % use_filter Apply the smoother (false = pass the input straight through)
-        use_filter = true
         % output_derivatives Add the dot_x and ddot_x output ports
         output_derivatives = false
     end
@@ -62,7 +62,7 @@ classdef mfc_smoother_block < matlab.System
 
         function varargout = stepImpl(obj, x)
             [x_filt, dot_x, ddot_x] = mfc_siso.ref_traj( ...
-                x, obj.x_km1, obj.x_km2, obj.Ts, obj.window, obj.use_filter);
+                x, obj.x_km1, obj.x_km2, obj.Ts, obj.window, true);
 
             obj.x_km2 = obj.x_km1;
             obj.x_km1 = x_filt;
@@ -117,10 +117,10 @@ classdef mfc_smoother_block < matlab.System
         end
 
         function icon = getIconImpl(obj)
-            if obj.use_filter
-                icon = sprintf('IIR smoother\nW = %g', obj.window);
+            if obj.window == 0
+                icon = sprintf('IIR smoother\nW = 0 (pass-through)');
             else
-                icon = sprintf('IIR smoother\n(bypassed)');
+                icon = sprintf('IIR smoother\nW = %g', obj.window);
             end
         end
     end
@@ -130,11 +130,11 @@ classdef mfc_smoother_block < matlab.System
             header = matlab.system.display.Header('mfc_smoother_block', ...
                 'Title', 'MFC IIR Smoother', ...
                 'Text', sprintf(['Unity-DC-gain critically damped 2nd-order IIR low-pass ', ...
-                    '(repeated pole at W/(W+1), memory ~W samples; W = 0 passes through).\n\n', ...
-                    'Used as the reference-trajectory filter, as the numerator and ', ...
-                    'denominator filters of a dissected algebraic estimator, and as an ', ...
-                    'F_hat post-filter. Enable the derivative outputs when driving the ', ...
-                    'feedforward path of mfc_command_block.']));
+                    '(repeated pole at W/(W+1), memory ~W samples).\n\n', ...
+                    'Used as the reference-trajectory filter and as an F_hat ', ...
+                    'post-filter. Enable the derivative outputs when driving the ', ...
+                    'feedforward path of mfc_command_block. Set W = 0 to bypass it ', ...
+                    'exactly -- there is no separate enable flag.']));
         end
     end
 end

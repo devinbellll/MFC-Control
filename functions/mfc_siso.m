@@ -404,7 +404,10 @@ function [fb, int_err, dot_err] = feedback(err, err_km1, int_err_km1, Ts, Kp, Kd
 %   the whole controller -- it is returned even in the coupled case (where
 %   fb ignores it) so a block can log or filter it.
 %
-%   Wrapped by blocks/mfc_feedback_block.
+%   No block wraps this: in an assembled Simulink loop the explicit law is
+%   a stock Discrete PID Controller into mfc_command_block's fb input (and
+%   with a coupled estimator, fb is simply Ground). It stays here because
+%   mfc_siso.step -- and therefore mfc_siso_core -- still uses it.
 
     int_err = int_err_km1 + (err + err_km1)/2 * Ts;   % trapezoidal integral
     dot_err = (err - err_km1) / Ts;                   % noise-sensitive term
@@ -461,11 +464,12 @@ function [u, frozen] = limit(u_raw, u_prev, command_filter, use_sat, u_min, u_ma
 %   keep the previous one. This method does not own the integrator, so it
 %   cannot freeze it itself -- it only reports.
 %
-%   Wrapped by blocks/mfc_command_filter_block, whose 'sat' output is this
-%   flag. NOTE: in a loop assembled from separate blocks that flag must pass
-%   through a unit delay to reach the feedback block without forming an
-%   algebraic loop, so a composed loop freezes ONE SAMPLE LATER than
-%   mfc_siso.step does. See Knowledge/block-library-signal-flow.md.
+%   No block wraps this: mfc_siso_core is the only user, and it is the only
+%   place the anti-windup handshake exists at all. mfc_command_block offers
+%   a plain clamp with no freeze (nothing to freeze -- it owns no
+%   integrator), so if you need integral action against a real actuator
+%   limit, use mfc_siso_core or a PID block with its own anti-windup.
+%   See Knowledge/block-library-signal-flow.md.
 
     u      = (u_raw + (command_filter - 1)*u_prev) / command_filter;
     frozen = false;

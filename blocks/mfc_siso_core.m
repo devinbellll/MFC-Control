@@ -51,8 +51,7 @@ classdef mfc_siso_core < matlab.System
     %          in the estimator, the window buffers and the EMA filter.
     %          alpha -- optional (Live alpha input): overrides the alpha
     %          mask parameter sample by sample.
-    %     Out: u, F_hat, sp_filt, err, u_raw (pre-filter/saturation command),
-    %          F_valid (1 once the estimator is past its startup hold).
+    %     Out: u, F_hat, sp_filt, err, u_raw (pre-filter/saturation command).
     %
     %   See also mfc_siso (config/init/step and the pipeline stages).
 
@@ -238,7 +237,7 @@ classdef mfc_siso_core < matlab.System
             obj.cfg = buildConfig(obj);
         end
 
-        function [u, F_hat, sp_filt, err, u_raw, F_valid] = stepImpl(obj, setpoint, measure, t, varargin)
+        function [u, F_hat, sp_filt, err, u_raw] = stepImpl(obj, setpoint, measure, t, varargin)
             % Live tunable-parameter changes must reach the config
             c = obj.cfg;
             c.alpha             = obj.alpha;
@@ -272,7 +271,6 @@ classdef mfc_siso_core < matlab.System
             sp_filt = out.sp_filt;
             err     = out.err;
             u_raw   = out.u_raw;
-            F_valid = double(out.est_valid);
         end
 
         function resetImpl(obj)
@@ -326,11 +324,11 @@ classdef mfc_siso_core < matlab.System
         end
 
         function num = getNumOutputsImpl(~)
-            num = 6;
+            num = 5;
         end
 
         function varargout = getOutputNamesImpl(~)
-            varargout = {'u', 'F_hat', 'sp_filt', 'err', 'u_raw', 'F_valid'};
+            varargout = {'u', 'F_hat', 'sp_filt', 'err', 'u_raw'};
         end
 
         function varargout = getOutputSizeImpl(obj)
