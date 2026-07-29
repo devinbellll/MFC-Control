@@ -19,12 +19,15 @@
 %%%      it internally, an assembled loop needs a real unit delay (here,
 %%%      the u_km1 variable).
 %%%
-%%%   2. anti-windup is a handshake. mfc_command_filter_block's 'sat' output
-%%%      drives mfc_feedback_block's 'freeze' input, and that path also
-%%%      needs a delay -- so a composed loop freezes the integrator one
-%%%      sample later than mfc_siso_core does. Saturation is OFF in this
-%%%      example, so the two match exactly; turn it on and expect a small
-%%%      divergence at the moment of saturation.
+%%%   2. the explicit feedback is YOURS. There is no feedback block: with a
+%%%      DECOUPLED estimator you wire a stock Discrete PID Controller on the
+%%%      error into the command block's fb input (mfc_siso.feedback stands
+%%%      in for it below, so the comparison stays exact). With a COUPLED
+%%%      estimator fb is Ground -- Kp and Kd are already inside F_hat.
+%%%
+%%% Composed loops have no anti-windup path at all; saturation is off here,
+%%% and mfc_siso_core remains the reference if you need integral action
+%%% against a real actuator limit.
 %%%
 %%% Run:  >> setup;  val_mfc_composed
 
@@ -50,18 +53,16 @@ A = mfc_siso_core( ...
 % 1. input smoother -> sp_filt and the feedforward derivatives
 B_smoother = mfc_smoother_block('Ts', Ts, 'window', WFilter, ...
                                 'output_derivatives', true);
-% 2. F-hat estimator. Decoupled => driven by the MEASUREMENT, no folding.
-B_est      = mfc_fhat_alg2_block('Ts', Ts, 'alpha', alpha, ...
-                                 'a_fold', 0, 'b_fold', 0, ...
+% 2. F-hat estimator. The DECOUPLED block: driven by the measurement,
+%    nothing folded -- swap in mfc_fhat_alg2_coupled_block (fed the error,
+%    given Kp/Kd) and drop the PID below to see the other structure.
+B_est      = mfc_fhat_alg2_decoupled_block('Ts', Ts, 'alpha', alpha, ...
                                  'est_filter_window', FFilter, 'est_hold_time', 0.1);
-% 3. feedback. Decoupled => the full explicit iPD(I).
-B_feedback = mfc_feedback_block('Ts', Ts, 'Kp', Kp, 'Kd', Kd, 'Ki', Ki, ...
-                                'coupled', false);
-% 4. model inversion
+% 3. model inversion (saturation available on its mask, off here)
 B_command  = mfc_command_block('alpha', alpha);
-% 5. command filter (EMA off, saturation off)
-B_filter   = mfc_command_filter_block('Ts', Ts, 'command_filter', 1, ...
-                                      'use_control_sat', false);
+% the explicit feedback is a stock Discrete PID in Simulink; its state is
+% just err_km1 and the trapezoidal integral, kept here in the loop below.
+B_err_km1 = 0;  B_int_err = 0;
 
 %%% sim setup: each controller drives its OWN copy of the plant
 t   = (0:Ts:6)';
@@ -82,12 +83,13 @@ for k = 1:numel(t)
 
     % --- B: assembled from stages -------------------------------------
     [sp_filt, dot_sp, ddot_sp] = step(B_smoother, ref(k));
-    err     = yB - sp_filt;
-    FB(k)   = step(B_est, yB, u_km1, t(k));       % decoupled: driven by measurement
-    fb      = step(B_feedback, err);
+    err     = yB - sp_filt;                        % note the sign: y - sp
+    FB(k)   = step(B_est, yB, u_km1, t(k));        % decoupled: driven by measurement
+    [fb, B_int_err] = mfc_siso.feedback(err, B_err_km1, B_int_err, ...
+                                        Ts, Kp, Kd, Ki, false);   % the PID
+    B_err_km1 = err;
     ff      = ddot_sp;                             % 2nd order => ddot_sp
-    u_raw   = step(B_command, FB(k), ff, fb);
-    UB(k)   = step(B_filter, u_raw);
+    UB(k)   = step(B_command, FB(k), ff, fb);
     u_km1   = UB(k);
 
     % --- plants --------------------------------------------------------

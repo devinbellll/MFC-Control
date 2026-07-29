@@ -18,11 +18,12 @@ function test_composed()
 %   does not validate Simulink port wiring or sample-time propagation; run
 %   examples/val_mfc_composed.m in MATLAB for that.
 %
-%   NOTE: saturation is off in the golden configuration, so the one-sample
-%   anti-windup difference between a composed loop and mfc_siso_core (see
-%   Knowledge/block-library-signal-flow.md) is not exercised here and the
-%   match is exact. With saturation on, expect the composed loop to differ
-%   by one sample of integrator freeze.
+%   NOTE: this exercises mfc_siso.step's own stage functions, including the
+%   explicit feedback and the EMA/anti-windup limiter that only the
+%   all-in-one mfc_siso_core still uses. A loop assembled from the Simulink
+%   stage blocks puts the feedback in a stock Discrete PID and has no
+%   anti-windup handshake at all -- with saturation off and the same gains
+%   it computes the same numbers, which is what this checks.
 %
 %   See also MFC_GOLDEN_TRACE, TEST_GOLDEN, MFC_SISO.
 
@@ -63,8 +64,8 @@ for c = 1:size(V, 1)
         est.y_buf = zeros(kernel.n_intervals + 1, 1);
         est.u_buf = zeros(kernel.n_intervals + 1, 1);
     end
-    err_km1 = 0; int_err = 0;                           % feedback block
-    u_km1 = 0;                                          % command filter block
+    err_km1 = 0; int_err = 0;                           % the explicit PID
+    u_km1 = 0;                                          % the loop's unit delay
 
     y = 0; dy = 0; u_act = 0;
     T = zeros(N, 6);
@@ -92,7 +93,7 @@ for c = 1:size(V, 1)
             [F_hat, est, dbg] = mfc_fhat_sliding_window(y, u_prev, alpha, t(k), kernel, est);
         end
 
-        % 3) feedback law
+        % 3) feedback law (a stock Discrete PID in a Simulink composed loop)
         int_err_prev = int_err;
         [fb, int_err] = mfc_siso.feedback(err, err_km1, int_err_prev, Ts, Kp, Kd, Ki, coupled);
 
@@ -100,7 +101,7 @@ for c = 1:size(V, 1)
         if order == 2, ff = ddot_sp; else, ff = dot_sp; end
         u_raw = mfc_siso.command(F_hat, ff, fb, alpha);
 
-        % 5) command filter + saturation (off here)
+        % 5) EMA + saturation (both off here; core-only path)
         [u, frozen] = mfc_siso.limit(u_raw, u_prev, 1, false, -600, 600);
         if frozen, int_err = int_err_prev; end
 

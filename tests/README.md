@@ -88,7 +88,8 @@ steady-state `F`, it checks three things only the object layer can get wrong:
 
 - the undefined **coupled + sliding-window** combination is *rejected*, not
   silently mis-run
-- the **stage blocks wired by hand reproduce `mfc_siso_core`** to `1e-12`
+- the **stage blocks wired by hand reproduce `mfc_siso_core`** to `1e-12`,
+  coupled and decoupled (the explicit PID stands in for the stock Simulink one)
 - `reset()` genuinely restores the initial state (same inputs → same outputs)
 
 > This file was stale for several commits — it referenced

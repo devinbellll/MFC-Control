@@ -111,47 +111,69 @@ function test_estimators()
 
     % ---------------------------------------------------------------------
     % 5) DECOMPOSITION at the object level: the stage blocks wired by hand
-    %    must reproduce mfc_siso_core sample for sample. This is the twin of
-    %    tests/test_composed.m, which proves the same for the stage maths.
-    %    No saturation here, so there is no anti-windup delay difference and
-    %    the match is exact.
+    %    must reproduce mfc_siso_core sample for sample, for BOTH controller
+    %    structures. This is the twin of tests/test_composed.m, which proves
+    %    the same for the stage maths.
+    %
+    %    Since the feedback block was removed, a composed loop puts the
+    %    explicit law in a stock Discrete PID; mfc_siso.feedback stands in
+    %    for it here so the comparison stays exact. With Ki = 0 the coupled
+    %    case needs no feedback at all -- fb is literally Ground.
     % ---------------------------------------------------------------------
     a0 = 1; a1 = 1.4; b = 2; alpha = 2; Kp = 25; Kd = 10; Ki = 0;
 
-    mono = mfc_siso_core('model_order', ORD{2}, 'controller_structure', STR{2}, ...
-                         'estimator_type', EST{1}, 'Ts', Ts, 'alpha', alpha, ...
-                         'Kp', Kp, 'Kd', Kd, 'Ki', Ki, ...
-                         'ref_filter_window', 10, 'est_filter_window', 10);
+    for coupled = [false true]
+        if coupled, structure = STR{1}; else, structure = STR{2}; end
 
-    smoo = mfc_smoother_block('Ts', Ts, 'window', 10, 'output_derivatives', true);
-    est2 = mfc_fhat_alg2_block('Ts', Ts, 'alpha', alpha, 'a_fold', 0, 'b_fold', 0, ...
-                               'est_filter_window', 10, 'est_hold_time', 0.1);
-    fbk  = mfc_feedback_block('Ts', Ts, 'Kp', Kp, 'Kd', Kd, 'Ki', Ki, 'coupled', false);
-    cmd  = mfc_command_block('alpha', alpha);
-    filt = mfc_command_filter_block('Ts', Ts, 'command_filter', 1, 'use_control_sat', false);
+        mono = mfc_siso_core('model_order', ORD{2}, 'controller_structure', structure, ...
+                             'estimator_type', EST{1}, 'Ts', Ts, 'alpha', alpha, ...
+                             'Kp', Kp, 'Kd', Kd, 'Ki', Ki, ...
+                             'ref_filter_window', 10, 'est_filter_window', 10);
 
-    tv = 0:Ts:3;
-    ym = 0; dym = 0;  yc = 0; dyc = 0;  u_km1 = 0;  worst = 0;
-    for k = 1:numel(tv)
-        r = 1.0*(tv(k) >= 0.2);
+        smoo = mfc_smoother_block('Ts', Ts, 'window', 10, 'output_derivatives', true);
+        cmd  = mfc_command_block('alpha', alpha);
+        if coupled
+            % Kp and Kd live INSIDE the estimator; nothing explicit is left.
+            est2 = mfc_fhat_alg2_coupled_block('Ts', Ts, 'alpha', alpha, ...
+                       'Kp', Kp, 'Kd', Kd, ...
+                       'est_filter_window', 10, 'est_hold_time', 0.1);
+        else
+            est2 = mfc_fhat_alg2_decoupled_block('Ts', Ts, 'alpha', alpha, ...
+                       'est_filter_window', 10, 'est_hold_time', 0.1);
+        end
 
-        um = step(mono, r, ym, tv(k));               % all-in-one
+        tv = 0:Ts:3;
+        ym = 0; dym = 0;  yc = 0; dyc = 0;  u_km1 = 0;  worst = 0;
+        e_km1 = 0; int_e = 0;
+        for k = 1:numel(tv)
+            r = 1.0*(tv(k) >= 0.2);
 
-        [sp, ~, ddsp] = step(smoo, r);               % assembled from stages
-        e   = yc - sp;
-        Fh  = step(est2, yc, u_km1, tv(k));          % u_km1 = the explicit unit delay
-        fb  = step(fbk, e);
-        ur  = step(cmd, Fh, ddsp, fb);
-        uc  = step(filt, ur);
-        u_km1 = uc;
+            um = step(mono, r, ym, tv(k));               % all-in-one
 
-        worst = max(worst, abs(um - uc));
+            [sp, ~, ddsp] = step(smoo, r);               % assembled from stages
+            e = yc - sp;
+            if coupled
+                Fh = step(est2, e, u_km1, tv(k));        % error-driven
+            else
+                Fh = step(est2, yc, u_km1, tv(k));       % measurement-driven
+            end
+            % the stock Discrete PID an assembled loop would use
+            [fb, int_e] = mfc_siso.feedback(e, e_km1, int_e, Ts, Kp, Kd, Ki, coupled);
+            e_km1 = e;
 
-        ydd = -a1*dym - a0*ym + b*um;  dym = dym + ydd*Ts;  ym = ym + dym*Ts;
-        ydd = -a1*dyc - a0*yc + b*uc;  dyc = dyc + ydd*Ts;  yc = yc + dyc*Ts;
+            uc = step(cmd, Fh, ddsp, fb);
+            u_km1 = uc;                                  % the explicit unit delay
+
+            worst = max(worst, abs(um - uc));
+
+            ydd = -a1*dym - a0*ym + b*um;  dym = dym + ydd*Ts;  ym = ym + dym*Ts;
+            ydd = -a1*dyc - a0*yc + b*uc;  dyc = dyc + ydd*Ts;  yc = yc + dyc*Ts;
+        end
+
+        if coupled, nm = 'coupled'; else, nm = 'decoupled'; end
+        check(sprintf('stage blocks reproduce mfc_siso_core, %s (max|du|=%.3g)', ...
+                      nm, worst), worst < 1e-12);
     end
-    check(sprintf('stage blocks reproduce mfc_siso_core (max|du|=%.3g)', worst), ...
-          worst < 1e-12);
 
     % ---------------------------------------------------------------------
     % 6) reset() must genuinely restore the initial state: the same input
