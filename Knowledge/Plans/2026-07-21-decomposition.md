@@ -1,5 +1,13 @@
 # Decompose MFC SISO into a hackable block library + Knowledge docs
 
+> **Superseded (2026-07-22).** This plan is kept as a record of the original
+> decomposition. The library has since been trimmed: the feedback, command-filter
+> and F-hat-divide blocks were removed (stock Simulink blocks do those jobs), the
+> algebraic estimators were split into explicit `_coupled_` / `_decoupled_`
+> variants instead of `a_fold`/`b_fold` parameters, and the `valid` /
+> `num_raw` / `den_raw` outputs were dropped. See
+> [[block-library-signal-flow]] for the current shape.
+
 ## Context
 
 `functions/` currently reads like a finished MathWorks add-on: one manager System

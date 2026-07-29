@@ -1,6 +1,7 @@
 # Algebraic estimator, first order
 
-`functions/mfc_fhat_algebraic_first_order.m` · block `mfc_fhat_alg1_block`
+`functions/mfc_fhat_algebraic_first_order.m` · blocks
+`mfc_fhat_alg1_decoupled_block`, `mfc_fhat_alg1_coupled_block`
 
 The same operational-calculus method as [[estimator-algebraic-2nd]], applied to
 the first-order ultra-local model. One derivative, one initial condition, one
@@ -51,12 +52,13 @@ zero until `t > hold_time`. The reasoning for both is in
 ## No derivative room — the structural limitation
 
 The first-order model has no $\dot z$ term. There is therefore nowhere to fold a
-derivative gain, and `mfc_fhat_alg1_block` correctly has no `a_fold` parameter.
+derivative gain, and `mfc_fhat_alg1_coupled_block` correctly has no `Kd`
+parameter.
 
-**Coupled at first order:** $K_p$ folds via `b_fold = -Kp`. $K_d$ is silently
-**unused** — `mfc_siso.feedback` applies only $K_i$ in the coupled branch, and
-the estimator has no slot for $K_d$. So a coupled first-order loop supplies *no
-damping whatsoever*, at any gain.
+**Coupled at first order:** $K_p$ folds via `b_fold = -Kp`. There is no slot for
+$K_d$ anywhere — the estimator has none to fold into, and the coupled rule is
+that the only explicit gain left is $K_i$. So a coupled first-order loop supplies
+*no damping whatsoever*, at any gain.
 
 On a plant that needs derivative action this is fatal, not merely suboptimal. In
 `examples/val_mfc.m` the plant is a true double integrator; stabilizing position
@@ -65,8 +67,8 @@ variant cannot provide it. **It diverges**, and
 `tests/golden/1st_coupled_alg.csv` pins that divergence as expected behaviour so
 the failure mode stays honest rather than quietly changing.
 
-**Decoupled at first order** has no such restriction: `mfc_feedback_block`
-applies $K_d$ explicitly at either order. `val_mfc.m` tunes $K_{d,1} = p$ there
+**Decoupled at first order** has no such restriction: the external PID applies
+$K_d$ explicitly at either order. `val_mfc.m` tunes $K_{d,1} = p$ there
 precisely to supply the damping the coupled variant cannot.
 
 > If you want first order **and** you need $K_d$: run decoupled. There is no

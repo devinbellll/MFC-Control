@@ -95,17 +95,21 @@ from a first-order model fundamentally requires velocity feedback, and the
 coupled first-order variant **cannot supply it at any gain**. It diverges, and
 `tests/golden/1st_coupled_alg.csv` pins that divergence as expected behaviour.
 
-If you need $K_d$ at first order, **run decoupled** — `mfc_feedback_block`
-applies it explicitly there, at either order.
+If you need $K_d$ at first order, **run decoupled** — the external PID applies
+it explicitly there, at either order. `mfc_fhat_alg1_coupled_block` has no `Kd`
+parameter at all, which is the point.
 
 ## Getting it wrong
 
-The most common wiring mistake in an assembled loop: leaving `mfc_feedback_block`
-on its default `coupled = false` while using a *coupled* estimator. Then $K_p$ is
-applied twice — once folded, once explicit — and the loop runs at double the
-proportional gain you think you set. Nothing errors; it just behaves oddly.
+The classic mistake is applying $K_p$ twice — once folded into $\hat F$, once in
+an explicit feedback law — so the loop runs at double the proportional gain you
+think you set. Nothing errors; it just behaves oddly.
 
-`mfc_feedback_block`'s `coupled` flag must match the estimator you wired up.
+The block split is the guard: a coupled estimator carries `Kp`/`Kd` on **its own**
+mask and takes `err` as its first input, and the accompanying rule is simply
+*`fb` is Ground* (or a $K_i$-only integrator). A decoupled estimator has no gain
+parameters at all and takes `y`, so the PID is obviously yours to supply. If you
+find yourself typing $K_p$ into two blocks, one of them is wrong.
 
 ## See also
 

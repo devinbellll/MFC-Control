@@ -1,6 +1,7 @@
 # Algebraic estimator, second order
 
-`functions/mfc_fhat_algebraic_second_order.m` · block `mfc_fhat_alg2_block`
+`functions/mfc_fhat_algebraic_second_order.m` · blocks
+`mfc_fhat_alg2_decoupled_block`, `mfc_fhat_alg2_coupled_block`
 
 The default estimator. Recovers $F$ from a **growing** window starting at
 $t = 0$, using operational calculus rather than quadrature.
@@ -102,8 +103,9 @@ if valid, F_hat = num_filt / den_filt; else, F_hat = 0; end
 ```
 
 `est_hold_time` (default `0.1 s`) refuses to divide until the denominator has
-grown. `valid` tells downstream logic when the estimate became real; it surfaces
-as the `F_valid` output of `mfc_siso_core`.
+grown, and $\hat F$ is exactly `0` until then. The functions still return a
+`valid` flag in their debug struct, but no block exposes it — during the hold
+$\hat F = 0$ says the same thing, and the flag was noise on the interface.
 
 ## The time origin matters
 
@@ -120,28 +122,26 @@ you have to design around:
 If any of that bites, use [[estimator-sliding-window]], which has finite memory
 and no time origin at all.
 
-## Dissecting it
+## Why the num/den filtering is not exposed
 
-Set `expose_raw` to get `num_raw`/`den_raw` outputs; clear `internal_filter` to
-make the internal smoothing an exact pass-through (window $W = 0$). Then rebuild
-the chain from separate blocks:
+The smoothing sits **before** the division and both sides must use the same $W$;
+that is what keeps the ratio unbiased. Splitting it into wireable blocks would
+make an essential invariant into something you can mis-wire, for no gain — so the
+estimator blocks take one `est_filter_window` and apply it to both sides
+internally. The raw numerator and denominator are not output at all.
 
-```
-[alg2] ─ num_raw ─► [smoother W] ─┐
-       ─ den_raw ─► [smoother W] ─┴─► [divide + hold] ─► F_hat
-```
-
-Both smoothers must use the **same** $W$. This reconstruction is verified
-bit-identical to the internal path, for both orders, in `tests/`.
+If you want a *smoothed $\hat F$*, that is a genuinely different operation:
+put an `mfc_smoother_block` after the estimator. It lags the estimate, which
+filtering num and den does not, to first order. See [[iir-smoother]].
 
 ## Parameters
 
 | Parameter | Meaning |
 |---|---|
 | `Ts` | sample time; the backward differences assume one advance per `Ts` |
-| `est_filter_window` | $W$ of the num/den smoother, in samples |
+| `est_filter_window` | $W$ of the num/den smoother, in samples (both sides) |
 | `est_hold_time` | hold $\hat F$ at 0 while $t \le$ this |
-| `a_fold`, `b_fold` | $-K_d$, $-K_p$ when coupled; $0$ when decoupled |
+| `Kp`, `Kd` | **coupled block only**; folded in as $b_{\text{fold}} = -K_p$, $a_{\text{fold}} = -K_d$. The decoupled block has neither. |
 | `alpha` | ultra-local model gain; must match `mfc_command_block` |
 
 ## See also

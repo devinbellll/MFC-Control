@@ -37,26 +37,29 @@ $$
 - **time constant** ≈ $W$ samples.
 - $W = 0$ is an **exact** pass-through, not an approximate one — the expression
   collapses to $x_f = x$. This is used deliberately: `mfc_fhat_alg*_block`
-  implements its `internal_filter` off switch by passing $W = 0$, so "no
-  filtering" needs no separate code path.
+  so "no filtering" needs no separate code path — and `mfc_smoother_block`
+  therefore has no enable flag, only $W$.
 
 All four properties are asserted in `tests/octave_sanity.m`.
 
 ## The four roles
 
-| role | where | note |
+| role | where | exposed as |
 |---|---|---|
-| 1. reference trajectory filter | `mfc_siso.ref_traj` | the "input smoother"; also supplies $\dot y^*, \ddot y^*$ |
-| 2. estimator **numerator** filter | inside the algebraic estimators | must match role 3 |
-| 3. estimator **denominator** filter | inside the algebraic estimators | must match role 2 |
-| 4. $\hat F$ post-filter | optional, after any estimator | mainly for the sliding window |
+| 1. reference trajectory filter | `mfc_siso.ref_traj` | `mfc_smoother_block` |
+| 2. estimator **numerator** filter | inside the algebraic estimators | — (internal) |
+| 3. estimator **denominator** filter | inside the algebraic estimators | — (internal) |
+| 4. $\hat F$ post-filter | optional, after any estimator | `mfc_smoother_block` |
 
-`mfc_smoother_block` is deliberately the same class in all four, so changing the
-smoother math is a single edit that propagates everywhere.
+One class in all four, so changing the smoother math is a single edit that
+propagates everywhere. Role 1 also supplies $\dot y^*, \ddot y^*$ — enable the
+derivative outputs.
 
-**Roles 2 and 3 must use the same $W$.** They feed a division; identical
-filtering on both is what keeps the ratio unbiased and largely cancels the
-filter's own lag. See [[estimator-algebraic-2nd]].
+**Roles 2 and 3 must use the same $W$**, which is exactly why they are *not*
+blocks. They feed a division; identical filtering on both is what keeps the ratio
+unbiased and largely cancels the filter's own lag, and a wiring you can get wrong
+is a wiring that will be got wrong. The estimator blocks take one
+`est_filter_window` and apply it to both. See [[estimator-algebraic-2nd]].
 
 **Role 4 is a different operation** from roles 2–3, even though it is the same
 filter. Post-filtering $\hat F$ lags the estimate; filtering num and den before
@@ -73,18 +76,16 @@ So the setpoint is filtered into something twice-differentiable first, and the
 derivatives are backward differences of the **filtered** history:
 
 ```matlab
-if use_filter
-    sp_filt = mfc_iir_smoother(setpoint, sp_km1, sp_km2, window);
-else
-    sp_filt = setpoint;
-end
+sp_filt = mfc_iir_smoother(setpoint, sp_km1, sp_km2, window);
 dot_sp  = (sp_filt - sp_km1) / Ts;
 ddot_sp = (sp_filt - 2*sp_km1 + sp_km2) / Ts^2;
 ```
 
-With `use_filter = false` the derivatives are finite differences of the **raw**
-setpoint — impulsive for a step. That mode exists for feeding an
-already-smooth externally generated trajectory, not for step commands.
+With $W = 0$ the smoother is an exact pass-through and the derivatives become
+finite differences of the **raw** setpoint — impulsive for a step. That mode
+exists for feeding an already-smooth externally generated trajectory, not for
+step commands. `mfc_smoother_block` therefore has no separate enable flag:
+bypassing it and setting $W = 0$ are the same operation.
 
 $W$ here trades tracking aggressiveness against command smoothness. It is the
 second knob to reach for, after $\alpha$.

@@ -13,7 +13,7 @@ Written to render in **both** GitHub and Obsidian: `$…$` / `$$…$$` for math,
    - [[estimator-algebraic-2nd]] — the default
    - [[estimator-algebraic-1st]] — and why it cannot be damped when coupled
    - [[estimator-sliding-window]] — finite memory, no time origin
-4. [[iir-smoother]] — the one filter used in four places
+4. [[iir-smoother]] — the one filter used in four places (two of them internal)
 5. [[block-library-signal-flow]] — the blocks, their ports, and the two wiring rules
 6. [[codegen-constraints]] — why the code is shaped the way it is
 
@@ -30,20 +30,29 @@ measurement ──┬───────────────────�
               │                                        └──► [4 command] ◄── [3 feedback]
               │                                                  │
               │                                                  ▼
-              └──◄── plant ◄── [5 command filter + saturation] ◄──┘
+              └──◄── plant ◄──────── [5 filter + saturation] ◄────┘
                                           │
                                      (unit delay) ──► u_prev, back to the estimator
+
+Stage 3's F-hat filter is internal to the algebraic estimators. In a composed
+loop stage 3's feedback is a stock Discrete PID (or Ground, when the estimator is
+coupled) and stage 5 is a plain clamp on the command block; only `mfc_siso_core`
+implements the full five stages in one block.
 ```
 
 | Stage | Function | Block |
 |---|---|---|
 | 1 input smoother | `mfc_siso.ref_traj` → `mfc_iir_smoother` | `mfc_smoother_block` |
-| 2 F-hat estimator | `mfc_fhat_algebraic_first_order` / `_second_order` / `mfc_fhat_sliding_window` | `mfc_fhat_alg1_block`, `mfc_fhat_alg2_block`, `mfc_fhat_window_block` |
-| 3 F-hat filter | `mfc_iir_smoother` (inside the algebraic estimators) | `mfc_smoother_block` + `mfc_fhat_divide_block` |
-| 3 feedback | `mfc_siso.feedback` | `mfc_feedback_block` |
-| 4 command | `mfc_siso.command` | `mfc_command_block` |
-| 5 command filter | `mfc_siso.limit` | `mfc_command_filter_block` |
+| 2 F-hat estimator | `mfc_fhat_algebraic_first_order` / `_second_order` / `mfc_fhat_sliding_window` | `mfc_fhat_alg{1,2}_{coupled,decoupled}_block`, `mfc_fhat_window_block` |
+| 3 F-hat filter | `mfc_iir_smoother` (**inside** the algebraic estimators) | — (or `mfc_smoother_block` as a post-filter) |
+| 3 feedback | `mfc_siso.feedback` | — (stock Discrete PID, or Ground when coupled) |
+| 4 command | `mfc_siso.command` | `mfc_command_block` (clamp optional) |
+| 5 command filter | `mfc_siso.limit` | — (core only; stock Discrete Filter otherwise) |
 | *all of it* | `mfc_siso.step` | `mfc_siso_core` |
+
+Stages with **—** deliberately have no block: either the math must stay inside
+its estimator (3, the num/den filter), or Simulink already ships the block
+(3 feedback, 5). See [[block-library-signal-flow]].
 
 ## Where the code lives
 
