@@ -150,3 +150,5 @@ filtering num and den does not, to first order. See [[iir-smoother]].
 - [[estimator-sliding-window]] — finite memory, time-origin independent
 - [[iir-smoother]] — the filter used on num and den
 - [[control-law-coupled-vs-decoupled]] — what to fold and when
+- [[estimator-algebraic-2nd-stock-blocks]] — the same estimator drawn with core
+  Simulink blocks, discrete and continuous
