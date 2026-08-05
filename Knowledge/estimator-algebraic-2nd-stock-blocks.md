@@ -263,3 +263,5 @@ applies — one filter, both sides.
 - [[iir-smoother]] — where $a_0, a_1, a_2$ come from
 - [[block-library-signal-flow]] — the loop this estimator sits in
 - [[codegen-constraints]] — why the shipped version is a `matlab.System` class
+- [[estimator-free-derivatives]] — $\ddot y$, $y(0)$ and $\dot y(0)$ off the
+  same graph, for a handful of extra blocks

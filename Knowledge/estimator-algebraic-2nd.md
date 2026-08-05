@@ -152,3 +152,5 @@ filtering num and den does not, to first order. See [[iir-smoother]].
 - [[control-law-coupled-vs-decoupled]] — what to fold and when
 - [[estimator-algebraic-2nd-stock-blocks]] — the same estimator drawn with core
   Simulink blocks, discrete and continuous
+- [[estimator-free-derivatives]] — what the $n=0$ and $n=1$ equations give you
+  once you stop throwing the initial conditions away
