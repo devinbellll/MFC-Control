@@ -447,6 +447,27 @@ function u_raw = command(F_hat, ff, fb, alpha)
 end
 
 
+function u_raw = command_mimo(F_hat, ff, fb, alpha)
+%MFC_SISO.COMMAND_MIMO Stage 4 with a MATRIX input gain.
+%
+%   u_raw = mfc_siso.command_mimo(F_hat, ff, fb, alpha)
+%
+%   Same inversion as MFC_SISO.COMMAND, but F_hat, ff, fb and u_raw are
+%   n-by-1 vectors and alpha is a square n-by-n matrix, so the scalar
+%   division becomes a linear solve:
+%
+%       alpha * u_raw = -F_hat + ff - fb
+%
+%   alpha must be invertible; it is a design parameter, not a plant
+%   identification, so choose it well-conditioned -- the estimator absorbs
+%   the mismatch into F_hat, but not the loss of rank.
+%
+%   Wrapped by blocks/mfc_command_mimo_block.
+
+    u_raw = alpha \ (-F_hat + ff - fb);
+end
+
+
 function [u, frozen] = limit(u_raw, u_prev, command_filter, use_sat, u_min, u_max)
 %MFC_SISO.LIMIT Stage 5: output EMA filter and saturation with anti-windup.
 %

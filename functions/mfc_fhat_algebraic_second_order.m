@@ -83,7 +83,9 @@ valid = (den_filt ~= 0) && (t > hold_time);
 if valid
     F_hat = num_filt / den_filt;
 else
-    F_hat = 0;
+    % zeros(size(z)), not 0: z may be a vector (matrix-alpha / MIMO use),
+    % and the held output must keep the port width. Identical for scalar z.
+    F_hat = zeros(size(z));
 end
 
 % Advance estimator state
