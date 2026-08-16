@@ -20,7 +20,13 @@ function octave_sanity()
 %   Both show up as a sign flip, not a magnitude error, so every check below
 %   asserts the sign separately from the tolerance.
 %
-%   See also TEST_GOLDEN, TEST_COMPOSED, TEST_ESTIMATORS.
+%   Sections 7-8 cover the MIMO (matrix-alpha) pair directly: den_raw/den_filt
+%   staying scalar while num_raw/num_filt are per-channel, a diagonal alpha
+%   not cross-coupling channels, and the command block's matrix solve
+%   reducing to the scalar division. The closed-loop equivalent lives in
+%   tests/test_golden_mimo.m.
+%
+%   See also TEST_GOLDEN, TEST_GOLDEN_MIMO, TEST_COMPOSED, TEST_ESTIMATORS.
 
 here = fileparts(mfilename('fullpath'));
 addpath(fullfile(here, '..', 'functions'));
@@ -106,7 +112,59 @@ check(sprintf('2nd order: window %.4f vs algebraic %.4f agree (both -> %.1f)', F
       abs(Fw - Fa) < 2e-2 && abs(Fw - Ftrue) < 2e-2);
 
 % =====================================================================
-% 6) Startup hold: both families must output exactly 0 before they are valid
+% 7) MIMO algebraic estimator (2nd order, decoupled): den_raw is SCALAR and
+%    SHARED across the vector while num_raw is PER-ELEMENT. That asymmetry
+%    is the whole reason one integration window can serve a vector channel,
+%    and it is what a C port is most likely to get wrong -- so it is pinned
+%    directly here, not only via the closed-loop golden traces in
+%    tests/test_golden_mimo.m.
+% =====================================================================
+a1 = 3; a2 = -2; alpha_v = 2; u0 = 0.5;      % two DIFFERENT channel dynamics
+Ftrue1 = a1 - alpha_v*u0;  Ftrue2 = a2 - alpha_v*u0;
+[F2, dbg2] = run_alg_vec(2, Ts, alpha_v*eye(2), ...
+    @(tt) [0.5*a1*tt.^2; 0.5*a2*tt.^2], [u0; u0]);
+check(sprintf('MIMO algebraic 2nd: F=[%.4f %.4f] vs true [%.4f %.4f]', ...
+      F2(1), F2(2), Ftrue1, Ftrue2), ...
+      abs(F2(1) - Ftrue1) < 2e-2 && abs(F2(2) - Ftrue2) < 2e-2);
+check('MIMO algebraic 2nd: den_raw/den_filt are scalar (shared)', ...
+      isscalar(dbg2.den_raw) && isscalar(dbg2.den_filt));
+check('MIMO algebraic 2nd: num_raw/num_filt are per-channel (2x1)', ...
+      isequal(size(dbg2.num_raw), [2 1]) && isequal(size(dbg2.num_filt), [2 1]));
+
+% Diagonal alpha must not cross-couple the channels: running two DIFFERENT
+% signals through the vector estimator with alpha = eye(2) must match
+% running each one through the scalar estimator independently, sample for
+% sample (bit-identical -- multiplying by the identity's 1s and 0s
+% introduces no rounding).
+[Fv, ~] = run_alg_vec_trace(2, Ts, eye(2), ...
+    @(tt) [0.5*a1*tt.^2; 0.5*a2*tt.^2], [u0; u0], 200);
+Fs1 = run_alg_trace(Ts, 1, @(tt) 0.5*a1*tt.^2, u0, 200);
+Fs2 = run_alg_trace(Ts, 1, @(tt) 0.5*a2*tt.^2, u0, 200);
+check('MIMO algebraic 2nd: diagonal alpha does not cross-couple channels', ...
+      isequal(Fv(:,1), Fs1) && isequal(Fv(:,2), Fs2));
+
+% =====================================================================
+% 8) MIMO command (matrix alpha): diagonal reduces to the scalar division;
+%    off-diagonal genuinely exercises the linear solve (guards a silent
+%    regression to elementwise division, which would be wrong whenever
+%    alpha is not diagonal).
+% =====================================================================
+Fh = [1.5; -2.0];  ffv = [0.3; 0.1];  fbv = [0.2; -0.1];
+alpha_diag2 = diag([2, 3]);
+u_mimo  = mfc_siso.command_mimo(Fh, ffv, fbv, alpha_diag2);
+u_scalar = [mfc_siso.command(Fh(1), ffv(1), fbv(1), 2); ...
+            mfc_siso.command(Fh(2), ffv(2), fbv(2), 3)];
+check(sprintf('MIMO command: diagonal alpha reduces to scalar command (max|d|=%.3g)', ...
+      max(abs(u_mimo - u_scalar))), max(abs(u_mimo - u_scalar)) < 1e-9);
+
+alpha_off = [1.0 0.4; -0.3 1.1];
+u_solve   = mfc_siso.command_mimo(Fh, ffv, fbv, alpha_off);
+u_naive   = (-Fh + ffv - fbv) ./ diag(alpha_off);   % the wrong, elementwise "port"
+check('MIMO command: off-diagonal alpha genuinely couples channels (solve != elementwise divide)', ...
+      max(abs(u_solve - u_naive)) > 1e-3);
+
+% =====================================================================
+% 9) Startup hold: both families must output exactly 0 before they are valid
 % =====================================================================
 st = zero_state(1);
 [F0, ~, dbg0] = mfc_fhat_algebraic_second_order(1, 1, 1, 0, Ts, 10, 0.1, 0, 0, st);
@@ -166,5 +224,45 @@ function F = run_alg(order, Ts, alpha, yfun, u0)
         else
             [F, st] = mfc_fhat_algebraic_first_order(yfun(t), u0, alpha, t, Ts, 10, 0.1, 0, st);
         end
+    end
+end
+
+function [F, dbg] = run_alg_vec(n, Ts, alpha, yfun, u0)
+% Drive the 2nd-order algebraic estimator (decoupled) with a vector z and a
+% square alpha, for 4000 samples, and return the final F and its dbg struct
+% (used to inspect num_raw/den_raw shapes).
+    st = struct('z_km1', zeros(n,1), 'z_km2', zeros(n,1), ...
+                'num_filt_km1', zeros(n,1), 'num_filt_km2', zeros(n,1), ...
+                'den_filt_km1', 0, 'den_filt_km2', 0);
+    N = 4000;
+    for k = 1:N
+        t = (k-1)*Ts;
+        [F, st, dbg] = mfc_fhat_algebraic_second_order(yfun(t), u0, alpha, t, Ts, 10, 0.1, 0, 0, st);
+    end
+end
+
+function [Ftrace, st] = run_alg_vec_trace(n, Ts, alpha, yfun, u0, N)
+% Like run_alg_vec, but returns F at every sample as an [N x n] trace
+% instead of only the final value.
+    st = struct('z_km1', zeros(n,1), 'z_km2', zeros(n,1), ...
+                'num_filt_km1', zeros(n,1), 'num_filt_km2', zeros(n,1), ...
+                'den_filt_km1', 0, 'den_filt_km2', 0);
+    Ftrace = zeros(N, n);
+    for k = 1:N
+        t = (k-1)*Ts;
+        [F, st] = mfc_fhat_algebraic_second_order(yfun(t), u0, alpha, t, Ts, 10, 0.1, 0, 0, st);
+        Ftrace(k, :) = F.';
+    end
+end
+
+function Ftrace = run_alg_trace(Ts, alpha, yfun, u0, N)
+% Like run_alg (2nd order, decoupled), but returns F at every sample as an
+% [N x 1] trace instead of only the final value.
+    st = zero_state(1);
+    Ftrace = zeros(N, 1);
+    for k = 1:N
+        t = (k-1)*Ts;
+        [F, st] = mfc_fhat_algebraic_second_order(yfun(t), u0, alpha, t, Ts, 10, 0.1, 0, 0, st);
+        Ftrace(k) = F;
     end
 end

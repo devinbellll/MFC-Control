@@ -7,15 +7,17 @@ ways:
 
 | File | Runs in | Covers |
 |---|---|---|
-| `octave_sanity.m` | Octave + MATLAB | estimator/smoother math vs analytic answers |
+| `octave_sanity.m` | Octave + MATLAB | estimator/smoother math vs analytic answers (SISO §1-6, MIMO §7-8) |
 | `test_golden.m` | Octave + MATLAB | the controller still reproduces reference traces |
 | `test_composed.m` | Octave + MATLAB | the pipeline decomposes faithfully into stages |
+| `test_golden_mimo.m` | Octave + MATLAB | the 2x2 matrix-alpha pair reproduces its reference traces, and reduces to the SISO trace when alpha is diagonal |
 | `test_estimators.m` | **MATLAB only** | the `matlab.System` objects: ports, reset, masks |
 
 ```bash
 octave --no-gui -q --path tests --path functions --eval octave_sanity
 octave --no-gui -q --path tests --path functions --eval test_golden
 octave --no-gui -q --path tests --path functions --eval test_composed
+octave --no-gui -q --path tests --path functions --eval test_golden_mimo
 ```
 
 ```matlab
@@ -45,6 +47,31 @@ octave --no-gui -q --path tests --path functions --eval golden_capture
 a true double integrator cannot be stabilized from a first-order ultra-local
 model, which has no derivative room to fold. It must keep diverging the same
 way. See [`../Knowledge/control-law-coupled-vs-decoupled.md`](../Knowledge/control-law-coupled-vs-decoupled.md).
+
+## `test_golden_mimo.m` — the MIMO (matrix-alpha) pair's no-regression contract
+
+`golden/mimo_diag.csv` and `golden/mimo_cross.csv` hold the closed-loop traces
+of the 2x2 decoupled estimator + command pair (`mfc_fhat_alg2_decoupled_mimo_block`
+/ `mfc_command_mimo_block`), captured the same way as the SISO golden traces —
+see `mfc_golden_trace_mimo.m`. `test_golden_mimo` re-runs it and demands a
+**bit-identical** match, then does one more thing the SISO test cannot: it
+cross-checks `mimo_diag` (`alpha = eye(2)`, two identical channels) against
+`golden/2nd_decoupled_alg.csv` itself, to a `1e-9` tolerance (not bit-exact,
+since the matrix solve and the vector estimator arithmetic take a different —
+if mathematically equivalent — path than the scalar SISO code). That is the
+direct evidence that the matrix solve in `mfc_command_mimo` reduces to the
+SISO result when the input gain is diagonal.
+
+`mimo_cross` uses an off-diagonal `alpha` and two **different** plants, so
+`F_hat` differs per channel while the estimator's `den_raw = t^2` stays
+scalar and shared — see `octave_sanity.m` §7 for a direct structural pin of
+that asymmetry, independent of the golden capture.
+
+Regenerating the reference is an explicit decision, exactly as for `test_golden.m`:
+
+```bash
+octave --no-gui -q --path tests --path functions --eval golden_capture_mimo
+```
 
 ## `test_composed.m` — is the decomposition honest?
 
@@ -80,6 +107,13 @@ as a sign flip rather than a magnitude error:
 
 - 2nd-order prefactor `-60/Tw^5` returns `-F`
 - 1st-order negated `u` kernel returns `F + (extra)*u`
+
+**MIMO (§7-8).** Two more properties, pinned directly rather than only via the
+closed-loop golden traces: the 2nd-order decoupled estimator's `den_raw`/`den_filt`
+stay scalar while `num_raw`/`num_filt` are per-channel, a diagonal `alpha` does
+not cross-couple channels (bit-identical to running the scalar estimator twice),
+and `mfc_command_mimo`'s matrix solve reduces to `mfc_command` when `alpha` is
+diagonal but is *not* equivalent to elementwise division once it isn't.
 
 ## `test_estimators.m` — the object layer (MATLAB)
 
