@@ -30,6 +30,7 @@ no divide block.
 | `mfc_fhat_alg1_decoupled_block` | `y, u_prev, t` (+`alpha`) → `F_hat` |
 | `mfc_fhat_alg2_decoupled_block` | `y, u_prev, t` (+`alpha`) → `F_hat` |
 | `mfc_fhat_window_block` | `y, u_prev, t` (+`alpha`) → `F_hat` |
+| `mfc_fhat_riachy2_block` | `y, u_prev, t` (+`alpha`) → `F_hat` (+`Y`) |
 | `mfc_fhat_alg1_coupled_block` | `err, u_prev, t` (+`alpha`) → `F_hat` |
 | `mfc_fhat_alg2_coupled_block` | `err, u_prev, t` (+`alpha`) → `F_hat` |
 | `mfc_command_block` | `F_hat, ff, fb` (+`alpha`) → `u` |
@@ -40,6 +41,12 @@ The estimator's **first input port name tells you the structure**: `y` means
 decoupled (true-plant $\hat F$, you supply the PID), `err` means coupled (the
 poles are folded in, `fb` is Ground). There is no coupled sliding-window block
 and there cannot be one — see [[estimator-sliding-window]].
+
+`mfc_fhat_riachy2_block` is decoupled too, but its `F_hat` is
+$\mathfrak F = F + K_D\dot y$, not $F$: it estimates from $Y = y + K_D\int y$,
+so the derivative feedback arrives inside the estimate. Its PID therefore needs
+**D = 0** and its `ff` needs $\ddot{sp} + K_D\,\dot{sp}$ — see
+[[riachy-trick]].
 
 The last two rows are the **MIMO pair**: the same 2nd-order decoupled math and
 the same command-block inversion, but on n-by-1 vector signals with a square

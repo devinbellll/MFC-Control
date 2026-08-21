@@ -18,6 +18,9 @@ function test_estimators()
 %        bounded when F is estimated with the correct sign
 %     4. the stage blocks, wired by hand, reproducing mfc_siso_core exactly
 %     5. reset() genuinely restoring the initial state
+%     6. mfc_fhat_riachy2_block: ports, the algebraic/window selector, the
+%        optional Y output, and it being a thin wrapper over
+%        mfc_riachy_transform + the selected estimator
 %
 %   See also MFC_SISO_CORE, OCTAVE_SANITY, TEST_GOLDEN, TEST_COMPOSED.
 
@@ -188,6 +191,82 @@ function test_estimators()
     again = zeros(1, 50);
     for k = 1:50, again(k) = step(cr, 1, 0.1*k, (k-1)*Ts); end
     check('reset() restores the initial state exactly', isequal(first, again));
+
+    % ---------------------------------------------------------------------
+    % 7) mfc_fhat_riachy2_block (Riachy's trick): the OBJECT layer only --
+    %    ports, the estimator selector, the optional Y output, reset. The
+    %    numerics and the loop wiring are tests/test_riachy.m.
+    %
+    %    The equality asserted here is that the block is a thin wrapper:
+    %    mfc_riachy_transform followed by the selected estimator, with
+    %    nothing folded. If it ever starts computing something of its own,
+    %    this fails.
+    % ---------------------------------------------------------------------
+    Kd_r = 4;  alpha_r = 2;
+    for kind = {'Algebraic (growing window)', 'Sliding window (Simpson)'}
+        algebraic = strncmp(kind{1}, 'Algebraic', 9);
+        rb = mfc_fhat_riachy2_block('estimator', kind{1}, 'Ts', Ts, ...
+                 'alpha', alpha_r, 'Kd', Kd_r, ...
+                 'est_filter_window', 10, 'est_hold_time', 0.1, ...
+                 'window_samples', 40, 'output_Y', true);
+
+        check(sprintf('riachy block (%s): ports are y,u_prev,t -> F_hat,Y', kind{1}), ...
+              isequal(cellstr(rb.getInputNames()),  {'y'; 'u_prev'; 't'}) && ...
+              isequal(cellstr(rb.getOutputNames()), {'F_hat'; 'Y'}));
+
+        % Hand-rolled reference: the two functions the block claims to call.
+        kern = mfc_siso.window_kernel(2, 40, Ts);
+        rs   = struct('int_km1', 0, 'y_km1', 0);
+        est  = struct('z_km1', 0, 'z_km2', 0, ...
+                      'num_filt_km1', 0, 'num_filt_km2', 0, ...
+                      'den_filt_km1', 0, 'den_filt_km2', 0, ...
+                      'y_buf', zeros(kern.n_intervals+1, 1), ...
+                      'u_buf', zeros(kern.n_intervals+1, 1));
+        worst = 0;  worstY = 0;  Fb = zeros(1, 200);
+        for k = 1:200
+            tk = (k-1)*Ts;
+            yk = 0.3*sin(5*tk) + 0.2;
+            uk = cos(2*tk);
+            [Fb(k), Yb] = step(rb, yk, uk, tk);
+
+            [Yr, rs] = mfc_riachy_transform(yk, Kd_r, Ts, rs);
+            if algebraic
+                [Fr, est] = mfc_fhat_algebraic_second_order( ...
+                    Yr, uk, alpha_r, tk, Ts, 10, 0.1, 0, 0, est);
+            else
+                [Fr, est] = mfc_fhat_sliding_window(Yr, uk, alpha_r, tk, kern, est);
+            end
+            worst  = max(worst,  abs(Fb(k) - Fr));
+            worstY = max(worstY, abs(Yb - Yr));
+        end
+        check(sprintf('riachy block (%s): equals transform + estimator (max|dF|=%.3g)', ...
+              kind{1}, worst), worst < 1e-12 && worstY < 1e-12);
+        check(sprintf('riachy block (%s): F_hat is not identically zero', kind{1}), ...
+              any(Fb ~= 0));
+
+        reset(rb);
+        again = zeros(1, 200);
+        for k = 1:200
+            tk = (k-1)*Ts;
+            again(k) = step(rb, 0.3*sin(5*tk) + 0.2, cos(2*tk), tk);
+        end
+        check(sprintf('riachy block (%s): reset() restores the initial state', kind{1}), ...
+              isequal(Fb, again));
+    end
+
+    % The selector must actually select: the two estimators disagree on the
+    % same input (a guard against the dispatch silently collapsing to one).
+    ra = mfc_fhat_riachy2_block('estimator', 'Algebraic (growing window)', ...
+             'Ts', Ts, 'alpha', alpha_r, 'Kd', Kd_r, 'window_samples', 40);
+    rw = mfc_fhat_riachy2_block('estimator', 'Sliding window (Simpson)', ...
+             'Ts', Ts, 'alpha', alpha_r, 'Kd', Kd_r, 'window_samples', 40);
+    gap = 0;
+    for k = 1:200
+        tk = (k-1)*Ts;
+        gap = max(gap, abs(step(ra, 0.3*sin(5*tk) + 0.2, cos(2*tk), tk) - ...
+                           step(rw, 0.3*sin(5*tk) + 0.2, cos(2*tk), tk)));
+    end
+    check(sprintf('riachy block: the estimator selector selects (gap=%.3g)', gap), gap > 1e-6);
 
     fprintf('\n%d passed, %d failed\n', N_PASS, N_FAIL);
     if N_FAIL > 0

@@ -36,6 +36,10 @@ Two rules explain what is and is not a block:
    mask; a decoupled one takes `y` and has no gain parameters. The first input
    port name tells you the structure. Do not reintroduce `a_fold`/`b_fold`-style
    knobs.
+   The one exception is `mfc_fhat_riachy2_block`, where the estimator kind
+   (algebraic or sliding window) *is* a mask parameter: both choices have the
+   same ports, the same wiring and the same $\mathfrak F$, so it is numerics,
+   not structure.
 2. **Anything Simulink already ships is not wrapped.** The explicit feedback is
    a stock Discrete PID into `mfc_command_block`'s `fb` input (or Ground, when
    the estimator is coupled); output filtering is a stock Discrete Filter.
@@ -69,12 +73,17 @@ Consequences worth knowing before "fixing" something:
 octave --no-gui -q --path tests --path functions --eval octave_sanity
 octave --no-gui -q --path tests --path functions --eval test_golden
 octave --no-gui -q --path tests --path functions --eval test_composed
+octave --no-gui -q --path tests --path functions --eval test_riachy
 ```
 
 ```matlab
 >> setup
 >> test_estimators     % MATLAB only: ports, masks, reset, block composition
 ```
+
+`tests/test_riachy.m` covers Riachy's trick (the transform, the estimate, and
+a composed loop against the ordinary iPD); `tests/test_estimators.m` §7 covers
+its block layer.
 
 `tests/golden/*.csv` is the no-regression contract across all six supported
 variants. `test_composed` and `test_estimators` §5 both assert that a

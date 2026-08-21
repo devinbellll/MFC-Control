@@ -13,6 +13,7 @@ Written to render in **both** GitHub and Obsidian: `$…$` / `$$…$$` for math,
    - [[estimator-algebraic-2nd]] — the default
    - [[estimator-algebraic-1st]] — and why it cannot be damped when coupled
    - [[estimator-sliding-window]] — finite memory, no time origin
+   - [[riachy-trick]] — a second-order iPD with no derivative anywhere
 4. [[iir-smoother]] — the one filter used in four places (two of them internal)
 5. [[block-library-signal-flow]] — the blocks, their ports, and the two wiring rules
 6. [[codegen-constraints]] — why the code is shaped the way it is
