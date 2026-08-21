@@ -103,6 +103,9 @@ $T_s = 0.01$ — roughly a 0.1 s memory in both.
 
 ## See also
 
+- [[noise-and-filter-placement]] — where this filter should and should not go,
+  and how it compares with a Butterworth of the same cutoff
+
 - [[estimator-algebraic-2nd]] — why num and den are filtered separately
 - [[estimator-sliding-window]] — the estimator with no internal smoothing
 - [[block-library-signal-flow]] — wiring the smoother into each role

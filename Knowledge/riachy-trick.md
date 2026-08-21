@@ -102,6 +102,19 @@ because $\mathfrak F$ contains $K_D \dot y$ and therefore **moves fast**:
 
 Prefer the sliding window for this trick unless you have a reason not to.
 
+## The noise result, which is arguably the bigger win
+
+Removing $K_D \dot e$ removes the loop's dominant noise path. In a
+representative decoupled loop ($\sigma = 10^{-4}$, $T_s = 1$ ms, $K_d = 16$) the
+derivative term carried ten times more command noise than the estimator did;
+Riachy's trick replaces it with an *integral* of the measurement, which
+attenuates noise instead of amplifying it. Same plant, same closed-loop poles,
+no filter and no added lag: $\operatorname{std}(u)$ fell from 1.152 to 0.120.
+
+That is a better argument for the trick than the one it is usually sold on. See
+[[noise-and-filter-placement]] for the diagnosis that decides when it applies,
+and for why filtering the derivative term instead is the expensive option.
+
 ## What it costs
 
 Against the ordinary decoupled iPD on the same plant and the same gains
@@ -121,3 +134,4 @@ to it. What you buy is that no differentiator ever touches the measurement.
 - [[estimator-free-derivatives]] — the other way to get derivatives without
   differentiating: read them out of the estimate itself
 - [[block-library-signal-flow]] — ports, sign conventions, the unit delay
+- [[noise-and-filter-placement]] — where to filter once the D term is gone

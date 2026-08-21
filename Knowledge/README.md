@@ -14,9 +14,11 @@ Written to render in **both** GitHub and Obsidian: `$…$` / `$$…$$` for math,
    - [[estimator-algebraic-1st]] — and why it cannot be damped when coupled
    - [[estimator-sliding-window]] — finite memory, no time origin
    - [[riachy-trick]] — a second-order iPD with no derivative anywhere
-4. [[iir-smoother]] — the one filter used in four places (two of them internal)
-5. [[block-library-signal-flow]] — the blocks, their ports, and the two wiring rules
-6. [[codegen-constraints]] — why the code is shaped the way it is
+4. [[noise-and-filter-placement]] — which path carries the noise, and the four
+   places you can filter (two of which are wrong)
+5. [[iir-smoother]] — the one filter used in four places (two of them internal)
+6. [[block-library-signal-flow]] — the blocks, their ports, and the two wiring rules
+7. [[codegen-constraints]] — why the code is shaped the way it is
 
 ## The pipeline
 
@@ -63,7 +65,7 @@ functions/    the math, plain functions + the mfc_siso namespace
   mfc_iir_smoother.m                  the shared 2nd-order IIR
   mfc_fhat_algebraic_first_order.m    growing-window estimator, 1st order
   mfc_fhat_algebraic_second_order.m   growing-window estimator, 2nd order
-  mfc_fhat_sliding_window.m           finite-window Simpson estimator
+  mfc_fhat_sliding_window.m           finite-window FIR estimator
 
 blocks/       matlab.System wrappers -- no math, only ports/state/masks
   mfc_siso_core.m         the assembled all-in-one controller
