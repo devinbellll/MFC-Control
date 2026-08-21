@@ -19,6 +19,7 @@ classdef mfc_siso
 %
 %     HELPERS
 %       kernel = mfc_siso.window_kernel(order, window_samples, Ts)
+%       m      = mfc_siso.poly_moment(coeffs, j, a, b)
 %
 %   The stage methods take loose scalars rather than the state struct, so a
 %   stage block that owns its own DiscreteState can call them directly
@@ -65,7 +66,7 @@ function cfg = config(varargin)
 %                    at either model order.
 %     'estimator'    : 'algebraic' | 'sliding_window' (default 'algebraic')
 %         algebraic     : growing-window operational-calculus recursion.
-%         sliding_window: fixed-length Simpson-quadrature integral
+%         sliding_window: fixed-length FIR window integral, exact taps
 %                         (decoupled only -- coupled+sliding_window errors).
 %
 %   Tuning
@@ -229,9 +230,9 @@ function [out, state] = step(setpoint, measure, t, u_prev, alpha, cfg, state)
 %                        | algebraic (growing window) | sliding window
 %     -------------------+-----------------------------+------------------
 %     2nd order coupled  | error-driven, poles folded  |   (undefined)
-%     2nd order decoupled| measurement-driven + iPD(I) | same, Simpson
+%     2nd order decoupled| measurement-driven + iPD(I) | same, FIR window
 %     1st order coupled  | error-driven, pole folded   |   (undefined)
-%     1st order decoupled| measurement-driven + iP(I)  | same, Simpson
+%     1st order decoupled| measurement-driven + iP(I)  | same, FIR window
 %
 %   Command law (the fold vs explicit split is decided by coupled/decoupled
 %   alone -- model order only selects the feedforward derivative order):
@@ -507,15 +508,15 @@ end
 % =====================================================================
 
 function kernel = window_kernel(model_order, window_samples, Ts)
-%MFC_SISO.WINDOW_KERNEL Precompute the sliding-window quadrature kernel.
+%MFC_SISO.WINDOW_KERNEL Precompute the sliding-window FIR taps.
 %
 %   kernel = mfc_siso.window_kernel(model_order, window_samples, Ts)
 %
 %   Builds the constant part of the sliding-window (non-algebraic) F
-%   estimators used by MFC_FHAT_SLIDING_WINDOW. The estimators evaluate a
-%   weighted integral over a window of length Tw; everything that does not
-%   depend on the signals (time nodes, measurement kernel, unit input
-%   kernel, Simpson weights, prefactor) is computed once here.
+%   estimators used by MFC_FHAT_SLIDING_WINDOW: one fixed multiplier -- a
+%   TAP -- for every stored sample of y and of u. Everything that does not
+%   depend on the signals is computed once here, so the estimator itself is
+%   a multiply-accumulate over the two windows.
 %
 %   model_order = 1  (ultra-local model dot_y = F + alpha*u, Eq. 11):
 %       F = -(6/Tw^3) * int_0^Tw [ (Tw - 2*sigma) * y(sigma)
@@ -527,65 +528,142 @@ function kernel = window_kernel(model_order, window_samples, Ts)
 %
 %   Both are returned in the common form used by MFC_FHAT_SLIDING_WINDOW:
 %
-%       F = prefactor * (Ts/3) * sum( simpson_weights .* ...
-%             ( y_kernel .* y_buf + alpha * u_kernel_unit .* u_buf ) )
+%       F = tap_y' * y_buf  +  alpha * ( tap_u_unit' * u_buf )
 %
-%   (the sign and the 1/2 of the second-order input kernel are folded into
-%   u_kernel_unit, so alpha can stay a live run-time input).
+%   (the prefactor, the sign and the 1/2 of the second-order input kernel
+%   are folded into the taps; alpha is left out of tap_u_unit so it can stay
+%   a live run-time input).
 %
-%   QUADRATURE: composite Simpson with an EVEN interval count
-%   (window_samples is rounded up to even; realized window Tw =
-%   n_intervals*Ts). Trapezoidal integration is NOT usable for the
-%   second-order kernel: the 60/Tw^5 prefactor amplifies its O(Ts^2/Tw^4)
-%   leakage to ~60x error at practical sample times. Simpson is exact
-%   through cubics, so the sliding-window estimate matches the algebraic
-%   variants.
+%   HOW THE TAPS ARE COMPUTED. The weighting kernels above are POLYNOMIALS
+%   we wrote down ourselves, so there is no reason to approximate them --
+%   the only genuine ignorance is what the signals did BETWEEN samples.
+%   Each tap is therefore the exact integral of the kernel against that
+%   sample's interpolation basis:
+%
+%     y  is modelled as piecewise LINEAR (a "tent" basis, since y is
+%        sampled and nothing better is known), so
+%            tap_y(i) = int K_y(sigma) * tent_i(sigma) dsigma
+%        which is a cubic (1st order) or quartic (2nd order) integral over
+%        the two half-intervals either side of node i -- closed form, power
+%        rule, no quadrature rule involved.
+%
+%     u  is modelled as piecewise CONSTANT, which is not a model at all but
+%        the truth: the command reaches the plant through a zero-order
+%        hold. So tap_u_unit(j) is the exact integral of K_u over the one
+%        interval that sample was held across, and the input term carries
+%        NO quadrature error whatsoever.
+%
+%   This also fixes the alignment: u_buf(end) is u_prev, the command held
+%   over the interval ENDING now, so it owns the last interval and the
+%   oldest u sample (whose interval fell out of the window) gets a zero tap.
+%
+%   Composite Simpson was used here previously. It is a general-purpose
+%   rule that approximates the whole product K*y, including the K we know
+%   exactly, and it weights samples 1,4,2,4,...,1 -- a lumpiness that costs
+%   both accuracy (0.24% vs 0.010% gain error on an 11-sample window; a
+%   steady factor of ~24 at any size) and about 10% more noise for nothing.
+%   It also forced window_samples to be rounded UP to even. None of that
+%   applies any more: any window length >= 2 intervals is valid and means
+%   exactly what it says.
+%
+%   Sanity properties the taps must have, all checked in tests:
+%     sum(tap_y) == 0          blind to a constant y (no acceleration)
+%     sum(sigma.*tap_y) == 0   blind to a ramp y (no acceleration either)
+%     tap_y' * (sigma.^2/2) == 1 (2nd order)   unity gain on acceleration
 %
 %   Output: kernel struct with fields
 %     .model_order      1 or 2
-%     .n_intervals      even interval count (buffers hold n_intervals+1 samples)
-%     .Tw               realized window length = n_intervals*Ts [s]
+%     .n_intervals      interval count (buffers hold n_intervals+1 samples)
+%     .Tw               window length = n_intervals*Ts [s]
 %     .Ts               sample time [s]
 %     .sigma            [(n+1)x1] window-local time nodes, 0..Tw
-%     .y_kernel         [(n+1)x1] measurement weighting
-%     .u_kernel_unit    [(n+1)x1] input weighting for alpha = 1
-%     .simpson_weights  [(n+1)x1] composite-Simpson weights (1 4 2 ... 4 1)
-%     .prefactor        -6/Tw^3 (1st order) or 60/Tw^5 (2nd order)
+%     .tap_y            [(n+1)x1] measurement taps, prefactor folded in
+%     .tap_u_unit       [(n+1)x1] input taps for alpha = 1, prefactor folded in
 
     validateattributes(model_order, {'numeric'}, {'scalar'});
     assert(model_order == 1 || model_order == 2, ...
            'mfc_siso.window_kernel: model_order must be 1 or 2.');
-    validateattributes(window_samples, {'numeric'}, {'scalar', 'integer', 'positive'});
+    validateattributes(window_samples, {'numeric'}, {'scalar', 'integer', '>=', 2});
     validateattributes(Ts, {'numeric'}, {'scalar', 'positive'});
 
-    n     = window_samples + mod(window_samples, 2);   % force even for Simpson
+    n     = window_samples;
     Tw    = n * Ts;
     sigma = (0:n).' * Ts;                              % window-local time, 0..Tw
 
+    % Kernel polynomials in ascending powers of sigma, degree 4 either way
+    % so the two orders share one code path.
     if model_order == 1
-        y_kernel      = Tw - 2*sigma;
-        u_kernel_unit = sigma .* (Tw - sigma);
-        prefactor     = -6 / Tw^3;
+        cy = [Tw, -2, 0, 0, 0];                        % Tw - 2*sigma
+        cu = [0, Tw, -1, 0, 0];                        % sigma*(Tw - sigma)
+        prefactor = -6 / Tw^3;
     else
-        y_kernel      = Tw^2 - 6*Tw*sigma + 6*sigma.^2;
-        u_kernel_unit = -0.5 * sigma.^2 .* (Tw - sigma).^2;
-        prefactor     = 60 / Tw^5;
+        cy = [Tw^2, -6*Tw, 6, 0, 0];                   % Tw^2 - 6*Tw*s + 6*s^2
+        cu = [0, 0, -0.5*Tw^2, Tw, -0.5];              % -0.5*s^2*(Tw - s)^2
+        prefactor = 60 / Tw^5;
     end
 
-    simpson_weights            = ones(n + 1, 1);
-    simpson_weights(2:2:end-1) = 4;
-    simpson_weights(3:2:end-1) = 2;
+    tap_y      = zeros(n + 1, 1);
+    tap_u_unit = zeros(n + 1, 1);
+
+    for i = 1:n+1
+        s_i = sigma(i);
+        acc = 0;
+
+        % Rising half of the tent, (sigma - a)/Ts on [s_i - Ts, s_i]
+        if i > 1
+            a   = s_i - Ts;
+            acc = acc + (mfc_siso.poly_moment(cy, 1, a, s_i) ...
+                         - a*mfc_siso.poly_moment(cy, 0, a, s_i)) / Ts;
+        end
+
+        % Falling half of the tent, (b - sigma)/Ts on [s_i, s_i + Ts]
+        if i < n+1
+            b   = s_i + Ts;
+            acc = acc + (b*mfc_siso.poly_moment(cy, 0, s_i, b) ...
+                         - mfc_siso.poly_moment(cy, 1, s_i, b)) / Ts;
+        end
+
+        tap_y(i) = prefactor * acc;
+
+        % Zero-order hold: sample i was held over the interval ENDING at
+        % s_i. The oldest sample's interval is outside the window, so its
+        % tap stays 0.
+        if i > 1
+            tap_u_unit(i) = prefactor * mfc_siso.poly_moment(cu, 0, sigma(i-1), s_i);
+        end
+    end
 
     kernel = struct( ...
-        'model_order',     model_order, ...
-        'n_intervals',     n, ...
-        'Tw',              Tw, ...
-        'Ts',              Ts, ...
-        'sigma',           sigma, ...
-        'y_kernel',        y_kernel, ...
-        'u_kernel_unit',   u_kernel_unit, ...
-        'simpson_weights', simpson_weights, ...
-        'prefactor',       prefactor);
+        'model_order',  model_order, ...
+        'n_intervals',  n, ...
+        'Tw',           Tw, ...
+        'Ts',           Ts, ...
+        'sigma',        sigma, ...
+        'tap_y',        tap_y, ...
+        'tap_u_unit',   tap_u_unit);
+end
+
+
+function m = poly_moment(c, j, a, b)
+%MFC_SISO.POLY_MOMENT Exact integral of sigma^j * p(sigma) over [a, b].
+%
+%   m = mfc_siso.poly_moment(c, j, a, b)
+%
+%   p is given by its coefficients in ASCENDING powers,
+%   p(sigma) = c(1) + c(2)*sigma + ... , and the integral is evaluated by
+%   the power rule, term by term:
+%
+%       int_a^b sigma^j * p(sigma) dsigma
+%           = sum_k c(k+1) * ( b^(k+j+1) - a^(k+j+1) ) / (k+j+1)
+%
+%   Exact, not approximate -- this is the whole reason MFC_SISO.WINDOW_KERNEL
+%   needs no quadrature rule. Only j = 0 and j = 1 are used there.
+
+    m = 0;
+    for k = 0:numel(c)-1
+        p = k + j + 1;
+        m = m + c(k+1) * (b^p - a^p) / p;
+    end
 end
 
 end

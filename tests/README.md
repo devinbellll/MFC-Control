@@ -96,16 +96,18 @@ to keep in sync.
 
 Tolerances are not uniform, and the differences are meaningful:
 
-- 1st-order sliding window: `1e-6`. The integrand is `y_kernel` (linear) ×
-  `y` (linear) = quadratic, which Simpson integrates **exactly**.
-- 2nd-order sliding window: `1e-3`. The integrand is quartic and Simpson is exact
-  only through cubics, so a small quadrature residual is correct behaviour.
+- 1st-order sliding window: `1e-6`. The test signal `y` is linear, so the
+  piecewise-linear model of `y` behind the taps is **exact** and so is the
+  kernel integration — nothing at all is approximated.
+- 2nd-order sliding window: `1e-5`. The test `y` is curved, and a straight line
+  between samples is not a parabola, so a small residual is correct behaviour.
+  (It was `1e-3` under the old Simpson quadrature — about 27x larger.)
 - algebraic estimators: `2e-2`. Backward-difference discretization, `O(Ts)`.
 
 **Sign guards.** Two historical bugs are pinned explicitly, because both show up
 as a sign flip rather than a magnitude error:
 
-- 2nd-order prefactor `-60/Tw^5` returns `-F`
+- 2nd-order prefactor `-60/Tw^5` returns `-F` (now folded into `tap_y`)
 - 1st-order negated `u` kernel returns `F + (extra)*u`
 
 **MIMO (§7-8).** Two more properties, pinned directly rather than only via the

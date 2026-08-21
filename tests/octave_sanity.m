@@ -14,7 +14,8 @@ function octave_sanity()
 %   REAL code -- there is no second copy to keep in sync any more.
 %
 %   Sign guards. Two historical bugs are pinned here explicitly:
-%     - 2nd-order sliding-window prefactor: -60/Tw^5 returns -F
+%     - 2nd-order sliding-window prefactor: -60/Tw^5 returns -F (now folded
+%       into the taps, so a sign slip shows up in tap_y)
 %     - 1st-order sliding-window input term: a negated u kernel returns
 %       F + (extra)*u
 %   Both show up as a sign flip, not a magnitude error, so every check below
@@ -60,25 +61,27 @@ check('smoother: step response monotone, no overshoot', mono);
 %    y = 0.5*a*t^2  =>  ddot_y = a  =>  F_true = a - alpha*u0
 % =====================================================================
 % u0 chosen so F_true is comfortably non-zero: a sign check against F_true = 0
-% would be vacuous. Tolerance is 1e-3, not eps: the 2nd-order integrand is
-% y_kernel (quadratic) x y (quadratic) = quartic, and Simpson is exact only
-% through cubics, so a small quadrature residual is expected and correct.
+% would be vacuous. Tolerance is 1e-5, not eps: the taps integrate the KERNEL
+% exactly, but y is only known at the samples and is modelled as piecewise
+% linear between them, so a small residual on a curved y is expected and
+% correct. (It was 1e-3 under the old Simpson quadrature -- ~27x larger.)
 a = 3; alpha = 2; u0 = 0.5;  Ftrue = a - alpha*u0;
 F = run_window(2, 40, Ts, alpha, @(tt) 0.5*a*tt.^2, u0);
-check(sprintf('window 2nd: F=%.6f vs true %.6f', F, Ftrue), abs(F - Ftrue) < 1e-3);
+check(sprintf('window 2nd: F=%.6f vs true %.6f', F, Ftrue), abs(F - Ftrue) < 1e-5);
 check('window 2nd: F sign correct (guards -60/Tw^5)', sign(F) == sign(Ftrue));
 
 a = 3; alpha = 2; u0 = 3;  Ftrue = a - alpha*u0;      % force F_true < 0
 F = run_window(2, 40, Ts, alpha, @(tt) 0.5*a*tt.^2, u0);
-check(sprintf('window 2nd: negative F=%.6f vs true %.6f', F, Ftrue), abs(F - Ftrue) < 1e-3);
+check(sprintf('window 2nd: negative F=%.6f vs true %.6f', F, Ftrue), abs(F - Ftrue) < 1e-5);
 check('window 2nd: negative F sign correct', F < 0);
 
 % =====================================================================
 % 3) Sliding window, 1st order: dot_y = F + alpha*u
 %    y = v*t  =>  dot_y = v  =>  F_true = v - alpha*u0
 % =====================================================================
-% 1st order: y_kernel (linear) x y (linear) = quadratic, which Simpson
-% integrates exactly -- hence the much tighter tolerance than 2nd order.
+% 1st order: y is LINEAR here, so the piecewise-linear model of y is exact and
+% so is the kernel integration -- nothing is approximated and the result is
+% exact to roundoff. Hence the much tighter tolerance than 2nd order.
 v = 4; alpha = 2; u0 = 0.5;  Ftrue = v - alpha*u0;
 F = run_window(1, 40, Ts, alpha, @(tt) v*tt, u0);
 check(sprintf('window 1st: F=%.6f vs true %.6f', F, Ftrue), abs(F - Ftrue) < 1e-6);
@@ -87,6 +90,45 @@ check('window 1st: F sign correct (guards the u-kernel sign)', sign(F) == sign(F
 v = 1; alpha = 2; u0 = 3;  Ftrue = v - alpha*u0;      % force F_true < 0
 F = run_window(1, 40, Ts, alpha, @(tt) v*tt, u0);
 check(sprintf('window 1st: negative F=%.6f vs true %.6f', F, Ftrue), abs(F - Ftrue) < 1e-6);
+
+% =====================================================================
+% 3b) The window TAPS themselves, straight from mfc_siso.window_kernel.
+%     Three moment conditions define the kernel, and they are what a port of
+%     this code is most likely to break -- so they are pinned directly here,
+%     not only through the closed-loop behaviour above.
+%       sum(tap_y)              = 0   blind to a constant y   (no accel)
+%       sum(sigma.*tap_y)       = 0   blind to a ramp y       (still no accel)
+%       tap_y'*(sigma.^2/2)     = 1   unity gain on acceleration (2nd order)
+%       tap_y'*sigma            = 1   unity gain on velocity     (1st order)
+%       sum(tap_u_unit)         = -1  exact, because u is a zero-order hold
+%     The first two are where the unknown initial position and velocity went:
+%     the two d/ds derivatives of the derivation show up out here as two
+%     vanishing moments of the tap list.
+% =====================================================================
+for n_win = [7 10 40]        % odd windows included: no even-count constraint
+    k2 = mfc_siso.window_kernel(2, n_win, Ts);
+    s2 = k2.sigma;
+    check(sprintf('taps 2nd (n=%d): blind to a constant y', n_win), ...
+          abs(sum(k2.tap_y)) < 1e-6 * max(abs(k2.tap_y)));
+    check(sprintf('taps 2nd (n=%d): blind to a ramp y', n_win), ...
+          abs(s2.' * k2.tap_y) < 1e-6 * max(abs(k2.tap_y)) * k2.Tw);
+    check(sprintf('taps 2nd (n=%d): unity gain on acceleration (%.6f)', ...
+          n_win, k2.tap_y.' * (0.5*s2.^2)), ...
+          abs(k2.tap_y.' * (0.5*s2.^2) - 1) < 2e-3);
+    check(sprintf('taps 2nd (n=%d): u taps are EXACT (%.12f)', n_win, sum(k2.tap_u_unit)), ...
+          abs(sum(k2.tap_u_unit) + 1) < 1e-12);
+    check(sprintf('taps 2nd (n=%d): oldest u sample has a zero tap', n_win), ...
+          k2.tap_u_unit(1) == 0);
+
+    k1 = mfc_siso.window_kernel(1, n_win, Ts);
+    s1 = k1.sigma;
+    check(sprintf('taps 1st (n=%d): blind to a constant y', n_win), ...
+          abs(sum(k1.tap_y)) < 1e-6 * max(abs(k1.tap_y)));
+    check(sprintf('taps 1st (n=%d): unity gain on velocity, exactly (%.12f)', ...
+          n_win, k1.tap_y.' * s1), abs(k1.tap_y.' * s1 - 1) < 1e-10);
+    check(sprintf('taps 1st (n=%d): u taps are EXACT (%.12f)', n_win, sum(k1.tap_u_unit)), ...
+          abs(sum(k1.tap_u_unit) + 1) < 1e-12);
+end
 
 % =====================================================================
 % 4) Algebraic estimators, decoupled (no folding), constant F

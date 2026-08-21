@@ -18,7 +18,7 @@ classdef mfc_siso_core < matlab.System
     %                          either model order.
     %     Estimator type       Algebraic (growing-window operational-calculus
     %                          recursion) or Sliding window (fixed-length
-    %                          Simpson-quadrature integral; decoupled only).
+    %                          FIR window integral; decoupled only).
     %
     %   The numerics live outside this class, in mfc_siso (per-sample law,
     %   dispatch and the individual pipeline stages) and the plain estimator
@@ -74,7 +74,7 @@ classdef mfc_siso_core < matlab.System
             'Decoupled (measurement-driven estimator, explicit iP/iPD)'});
         estimator_typeSet = matlab.system.StringSet({ ...
             'Algebraic (growing window)', ...
-            'Sliding window (Simpson quadrature)'});
+            'Sliding window (FIR taps)'});
     end
 
     % ---- Tuning ----------------------------------------------------------
@@ -184,9 +184,7 @@ classdef mfc_siso_core < matlab.System
             if strncmp(obj.estimator_type, 'Algebraic', 9)
                 n_buf = 1;                            % unused placeholder
             else
-                n     = obj.est_filter_window;
-                n     = n + mod(n, 2);                % even (Simpson)
-                n_buf = n + 1;
+                n_buf = obj.est_filter_window + 1;
             end
         end
 
@@ -363,7 +361,7 @@ classdef mfc_siso_core < matlab.System
                     '(coupled: error-driven estimator with folded poles; decoupled: ', ...
                     'measurement-driven estimator with explicit iP/iPD feedback) and ', ...
                     'the estimator type (algebraic growing window, or sliding-window ', ...
-                    'Simpson quadrature -- decoupled only).\n\n', ...
+                    'FIR window integral -- decoupled only).\n\n', ...
                     'Optional ports: u_applied feeds back the command that actually ', ...
                     'reached the plant (e.g. after an external limiter or from a ', ...
                     'measured actuator); alpha overrides the mask parameter live.']));

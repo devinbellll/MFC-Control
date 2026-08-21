@@ -1,4 +1,4 @@
-# Sliding-window estimator (Simpson quadrature)
+# Sliding-window estimator (exact FIR taps)
 
 `functions/mfc_fhat_sliding_window.m` + `mfc_siso.window_kernel` ·
 block `mfc_fhat_window_block`
@@ -28,56 +28,97 @@ weight function instead.
 
 ## Implementation
 
-Everything signal-independent is precomputed once, in `mfc_siso.window_kernel`:
+Everything signal-independent is precomputed once, in `mfc_siso.window_kernel`,
+as one fixed multiplier — a **tap** — per stored sample:
 
 ```matlab
-n     = window_samples + mod(window_samples, 2);   % force even for Simpson
-Tw    = n * Ts;
+n     = window_samples;          % no rounding; Tw = n*Ts exactly
 sigma = (0:n).' * Ts;
 
 if model_order == 1
-    y_kernel      = Tw - 2*sigma;
-    u_kernel_unit = sigma .* (Tw - sigma);
-    prefactor     = -6 / Tw^3;
+    cy = [Tw, -2, 0, 0, 0];              % Tw - 2*sigma
+    cu = [0, Tw, -1, 0, 0];              % sigma*(Tw - sigma)
+    prefactor = -6 / Tw^3;
 else
-    y_kernel      = Tw^2 - 6*Tw*sigma + 6*sigma.^2;
-    u_kernel_unit = -0.5 * sigma.^2 .* (Tw - sigma).^2;
-    prefactor     = 60 / Tw^5;
+    cy = [Tw^2, -6*Tw, 6, 0, 0];         % Tw^2 - 6*Tw*s + 6*s^2
+    cu = [0, 0, -0.5*Tw^2, Tw, -0.5];    % -0.5*s^2*(Tw - s)^2
+    prefactor = 60 / Tw^5;
 end
 ```
 
-The sign and the $\tfrac12$ of the second-order input kernel are **folded into
-`u_kernel_unit`**, so $\alpha$ can stay a live run-time input multiplying a
-constant array. Both orders then evaluate through one common expression:
+At run time the estimator is then a pure FIR filter — no division, no
+recursion, no state beyond the two windows:
 
 ```matlab
-integrand = kernel.y_kernel .* state.y_buf + alpha * kernel.u_kernel_unit .* state.u_buf;
-integral  = (kernel.Ts/3) * sum(kernel.simpson_weights .* integrand);
-F_hat     = kernel.prefactor * integral;      % when valid
+integral = kernel.tap_y.' * state.y_buf + alpha * (kernel.tap_u_unit.' * state.u_buf);
+F_hat    = integral;      % when valid
 ```
 
-## Simpson is mandatory, not a refinement
+The prefactor, the sign and the $\tfrac12$ of the second-order input kernel are
+folded into the taps; $\alpha$ is deliberately left **out** of `tap_u_unit` so it
+can stay a live run-time input multiplying a constant array.
 
-Composite Simpson, with an **even** interval count (`window_samples` is rounded
-up, so the realized window is $T_w = n\,T_s$):
+## How the taps are computed: exact, not quadrature
 
-```matlab
-simpson_weights            = ones(n + 1, 1);
-simpson_weights(2:2:end-1) = 4;
-simpson_weights(3:2:end-1) = 2;
+The weighting kernels above are polynomials *we wrote down ourselves*. There is
+no reason to approximate them — the only genuine ignorance is what the signals
+did **between** samples. So each tap is the exact integral of the kernel against
+that sample's interpolation basis:
+
+- **`y` is piecewise linear** (a tent basis — it is sampled, and nothing better
+  is known):
+  $$\text{tap}_y(i) = \int K_y(\sigma)\,\text{tent}_i(\sigma)\,d\sigma$$
+  a cubic (1st order) or quartic (2nd order) integral over the two half-intervals
+  either side of node $i$. Closed form, power rule, no quadrature rule involved.
+- **`u` is piecewise constant**, which is not a modelling assumption at all but
+  the truth: the command reaches the plant through a zero-order hold. So
+  `tap_u_unit(j)` is the exact integral of $K_u$ over the one interval that
+  sample was held across, and **the input term carries no error whatsoever**.
+
+That also settles the alignment question: `u_buf(end)` is `u_prev`, the command
+held over the interval *ending now*, so it owns the last interval, and the oldest
+`u` sample — whose interval has fallen out of the window — gets a zero tap.
+
+The whole thing is `mfc_siso.poly_moment` applied a few times:
+
+$$\int_a^b \sigma^j p(\sigma)\,d\sigma = \sum_k c_{k}\,\frac{b^{k+j+1} - a^{k+j+1}}{k+j+1}$$
+
+### What this replaced, and why
+
+Composite Simpson was used here originally. It is a general-purpose rule: it
+approximates the *whole product* $K \cdot y$ — including the $K$ we know
+exactly — and it weights samples $1, 4, 2, 4, \dots, 1$. Measured against the
+DC gain of the estimator (feed it $y = a\sigma^2/2$; it must return exactly $a$):
+
+| $n$ | trapezoid | Simpson | exact taps |
+|---|---|---|---|
+| 10 | 1.1994 | 1.0024 | 0.99990 |
+| 40 | 1.0125 | 1.0000094 | 0.9999996 |
+
+Simpson fixed trapezoid's 20 % gain error, and exact taps improve on Simpson by a
+further steady factor of ~24 at any window length. Two more things came free:
+
+- the lumpy $4, 2, 4, 2$ weighting let a few samples dominate, which cost
+  **~10 % more output noise** (sum of squared taps: 81231 vs 73723 at $n = 10$)
+  at every window size;
+- Simpson needed an **even** interval count, so `window_samples` was silently
+  rounded up. It no longer is: any $n \ge 2$ is legal and means what it says.
+
+A residual remains at second order and is *correct*: `y` is genuinely only known
+at the samples, and a straight line between them is not a parabola.
+`tests/octave_sanity.m` §2 pins it at `1e-5` (it was `1e-3` under Simpson), and
+§3b pins the three moment conditions on the taps themselves:
+
+```
+sum(tap_y)            = 0     blind to a constant y   (no acceleration)
+sum(sigma.*tap_y)     = 0     blind to a ramp y       (still none)
+tap_y'*(sigma.^2/2)   = 1     unity gain on acceleration
+sum(tap_u_unit)       = -1    exact, to machine precision
 ```
 
-Trapezoidal integration **cannot** be used at second order. Its leakage is
-$O(T_s^2/T_w^4)$, which sounds negligible — but the $60/T_w^5$ prefactor
-multiplies it, and at practical sample times the result is a ~60× error. Simpson
-is exact through cubics, which brings the sliding-window estimate into agreement
-with the algebraic ones.
-
-A residual remains at second order and is *correct*: the integrand is
-`y_kernel` (quadratic) × `y` (quadratic) = **quartic**, and Simpson is exact only
-through cubics. At first order the integrand is quadratic, so Simpson is exact.
-`tests/octave_sanity.m` encodes exactly this asymmetry — `1e-6` tolerance for
-first order, `1e-3` for second.
+The first two are where the unknown initial position and velocity went: the two
+$d/ds$ derivatives of the derivation reappear out here as two vanishing moments
+of the tap list.
 
 ## Decoupled by construction
 
@@ -133,9 +174,9 @@ See [[codegen-constraints]].
 
 | Parameter | Meaning |
 |---|---|
-| `model_order` | 1 or 2; picks the kernel pair and prefactor |
+| `model_order` | 1 or 2; picks the kernel pair and prefactor, hence the taps |
 | `Ts` | sample time; the buffers shift once per `Ts` |
-| `window_samples` | window length, **rounded up to even** for Simpson |
+| `window_samples` | window length in intervals; $T_w = n\,T_s$ exactly, no rounding |
 | `alpha` | ultra-local model gain; must match `mfc_command_block` |
 
 ## See also

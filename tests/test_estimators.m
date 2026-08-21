@@ -34,7 +34,7 @@ function test_estimators()
     ORD = {'First order (dot_y = F + alpha*u)', 'Second order (ddot_y = F + alpha*u)'};
     STR = {'Coupled (error-driven estimator, poles folded)', ...
            'Decoupled (measurement-driven estimator, explicit iP/iPD)'};
-    EST = {'Algebraic (growing window)', 'Sliding window (Simpson quadrature)'};
+    EST = {'Algebraic (growing window)', 'Sliding window (FIR taps)'};
 
     % ---------------------------------------------------------------------
     % 1) Every supported 2nd-order variant tracks a step on a stable plant.
@@ -203,7 +203,7 @@ function test_estimators()
     %    this fails.
     % ---------------------------------------------------------------------
     Kd_r = 4;  alpha_r = 2;
-    for kind = {'Algebraic (growing window)', 'Sliding window (Simpson)'}
+    for kind = {'Algebraic (growing window)', 'Sliding window (FIR)'}
         algebraic = strncmp(kind{1}, 'Algebraic', 9);
         rb = mfc_fhat_riachy2_block('estimator', kind{1}, 'Ts', Ts, ...
                  'alpha', alpha_r, 'Kd', Kd_r, ...
@@ -258,7 +258,7 @@ function test_estimators()
     % same input (a guard against the dispatch silently collapsing to one).
     ra = mfc_fhat_riachy2_block('estimator', 'Algebraic (growing window)', ...
              'Ts', Ts, 'alpha', alpha_r, 'Kd', Kd_r, 'window_samples', 40);
-    rw = mfc_fhat_riachy2_block('estimator', 'Sliding window (Simpson)', ...
+    rw = mfc_fhat_riachy2_block('estimator', 'Sliding window (FIR)', ...
              'Ts', Ts, 'alpha', alpha_r, 'Kd', Kd_r, 'window_samples', 40);
     gap = 0;
     for k = 1:200

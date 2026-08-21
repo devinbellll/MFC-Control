@@ -1,5 +1,5 @@
 classdef mfc_fhat_window_block < matlab.System
-    % mfc_fhat_window_block  Sliding-window (Simpson quadrature) F estimator.
+    % mfc_fhat_window_block  Sliding-window (FIR) F estimator.
     %
     %   Estimates F in the ultra-local model
     %
@@ -9,8 +9,10 @@ classdef mfc_fhat_window_block < matlab.System
     %   by evaluating a FIXED-LENGTH weighted integral of the measurement
     %   and applied-input histories over the last Tw seconds:
     %
-    %       F_hat = prefactor * (Ts/3) * sum( simpson_weights .*
-    %                 ( y_kernel .* y_buf + alpha * u_kernel_unit .* u_buf ) )
+    %   The integral is precomputed into one fixed multiplier -- a TAP --
+    %   per stored sample, so at run time this is a pure FIR filter:
+    %
+    %       F_hat = tap_y' * y_buf  +  alpha * ( tap_u_unit' * u_buf )
     %
     %   DECOUPLED BY CONSTRUCTION. This estimator sees only (y, u, alpha) --
     %   never the tracking error -- so F_hat is always the TRUE plant lumped
@@ -27,10 +29,14 @@ classdef mfc_fhat_window_block < matlab.System
     %   It also has no internal smoothing at all. If the estimate is noisy,
     %   follow it with an mfc_smoother_block on F_hat.
     %
-    %   QUADRATURE: composite Simpson, so window_samples is rounded UP to
-    %   even and the realized window is Tw = n_intervals*Ts. Trapezoidal
-    %   integration is not usable at second order -- the 60/Tw^5 prefactor
-    %   amplifies its leakage to a ~60x error at practical sample times.
+    %   TAPS, not a quadrature rule. The weighting kernels are polynomials
+    %   we wrote down ourselves, so each tap is the EXACT integral of the
+    %   kernel against that sample's interpolation basis -- piecewise linear
+    %   for y, piecewise constant for u (which is not an assumption at all:
+    %   the command really does reach the plant through a zero-order hold,
+    %   so the input term carries no quadrature error at all).
+    %   window_samples means exactly what it says; nothing is rounded. See
+    %   mfc_siso.window_kernel.
     %
     %   Ports
     %     In : y       plant measurement
@@ -60,7 +66,7 @@ classdef mfc_fhat_window_block < matlab.System
         model_order = 'Second order (ddot_y = F + alpha*u)'
         % Ts Sample time [s] (fixes the block's discrete rate)
         Ts = 0.01
-        % window_samples Window length [samples], rounded up to even for Simpson. Nontunable: sizes the buffers and the kernel.
+        % window_samples Window length [intervals]; realized window Tw = window_samples*Ts. Nontunable: sizes the buffers and the taps.
         window_samples = 10
     end
 
@@ -99,9 +105,7 @@ classdef mfc_fhat_window_block < matlab.System
             % Shared by resetImpl and getDiscreteStateSpecificationImpl so
             % the sizes cannot diverge. Built only from Nontunable
             % properties, so it is a compile-time constant under codegen.
-            n     = obj.window_samples;
-            n     = n + mod(n, 2);                % even (Simpson)
-            n_buf = n + 1;
+            n_buf = obj.window_samples + 1;
         end
     end
 
@@ -159,9 +163,8 @@ classdef mfc_fhat_window_block < matlab.System
         function varargout = isOutputFixedSizeImpl(~), varargout = {true}; end
 
         function icon = getIconImpl(obj)
-            n = obj.window_samples + mod(obj.window_samples, 2);
-            icon = sprintf('F-hat window\n%d order, Simpson\nTw = %g s', ...
-                           orderNum(obj), n*obj.Ts);
+            icon = sprintf('F-hat window\n%d order, FIR\nTw = %g s', ...
+                           orderNum(obj), obj.window_samples*obj.Ts);
         end
     end
 
@@ -169,7 +172,7 @@ classdef mfc_fhat_window_block < matlab.System
         function header = getHeaderImpl
             header = matlab.system.display.Header('mfc_fhat_window_block', ...
                 'Title', 'MFC F-hat: sliding window', ...
-                'Text', sprintf(['Fixed-length Simpson-quadrature estimator for ', ...
+                'Text', sprintf(['Fixed-length FIR estimator for ', ...
                     'dot_y = F + alpha*u (1st order) or ddot_y = F + alpha*u (2nd).\n\n', ...
                     'Decoupled by construction: it never sees the tracking error, so ', ...
                     'F_hat is the true plant lumped dynamics and an explicit feedback ', ...
@@ -177,7 +180,7 @@ classdef mfc_fhat_window_block < matlab.System
                     'required. Insensitive to the time origin (unlike the ', ...
                     'algebraic estimators) -- t only holds the output until the window ', ...
                     'fills.\n\nNo internal smoothing: add an mfc_smoother_block on F_hat ', ...
-                    'if the estimate is noisy. window_samples is rounded up to even.']));
+                    'if the estimate is noisy.']));
         end
     end
 end

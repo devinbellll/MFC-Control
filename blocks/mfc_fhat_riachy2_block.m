@@ -44,9 +44,9 @@ classdef mfc_fhat_riachy2_block < matlab.System
     %         window grows from t = 0, so t must be a clock that starts with
     %         the run, and est_hold_time guards the near-zero denominator.
     %         Smooths its own numerator and denominator.
-    %     Sliding window (Simpson)    fixed-length quadrature over the last
-    %         Tw = window_samples*Ts seconds (rounded up to even), held at
-    %         zero until the window fills. Insensitive to the time origin,
+    %     Sliding window (FIR)        fixed-length weighted sum over the
+    %         last Tw = window_samples*Ts seconds, held at zero until the
+    %         window fills. Insensitive to the time origin,
     %         and with no internal smoothing at all -- follow it with an
     %         mfc_smoother_block if Fk is noisy.
     %
@@ -89,14 +89,14 @@ classdef mfc_fhat_riachy2_block < matlab.System
         est_filter_window = 10
         % est_hold_time Algebraic only: F_hat held at zero until t exceeds this [s]
         est_hold_time = 0.1
-        % window_samples Sliding window only: window length [samples], rounded up to even for Simpson
+        % window_samples Sliding window only: window length [intervals]; Tw = window_samples*Ts
         window_samples = 10
     end
 
     properties (Hidden, Constant)
         estimatorSet = matlab.system.StringSet({ ...
             'Algebraic (growing window)', ...
-            'Sliding window (Simpson)'});
+            'Sliding window (FIR)'});
     end
 
     properties (Nontunable, Logical)
@@ -145,9 +145,7 @@ classdef mfc_fhat_riachy2_block < matlab.System
             if isAlgebraic(obj)
                 n_buf = 1;
             else
-                n     = obj.window_samples;
-                n     = n + mod(n, 2);            % even (Simpson)
-                n_buf = n + 1;
+                n_buf = obj.window_samples + 1;
             end
         end
     end
@@ -274,8 +272,7 @@ classdef mfc_fhat_riachy2_block < matlab.System
             if isAlgebraic(obj)
                 kind = 'algebraic';
             else
-                n    = obj.window_samples + mod(obj.window_samples, 2);
-                kind = sprintf('window, Tw = %g s', n*obj.Ts);
+                kind = sprintf('window, Tw = %g s', obj.window_samples*obj.Ts);
             end
             icon = sprintf('F-hat Riachy 2nd\nY = y + %g*int y\n%s', obj.Kd, kind);
         end
@@ -294,7 +291,7 @@ classdef mfc_fhat_riachy2_block < matlab.System
                     'that PID applies Kd twice.\n\n', ...
                     'The estimator applied to Y is a parameter, not a separate block: ', ...
                     'algebraic (growing window, needs a run-start clock) or sliding ', ...
-                    'window (Simpson, fixed memory, no internal smoothing). int y is ', ...
+                    'window (FIR, fixed memory, no internal smoothing). int y is ', ...
                     'unbounded -- with a non-zero steady state the sliding window is ', ...
                     'the better-behaved choice.']));
         end

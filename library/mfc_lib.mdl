@@ -39,10 +39,10 @@ __MWOPC_PART_BEGIN__ /metadata/coreProperties.xml
 <?xml version="1.0" encoding="UTF-8" standalone="yes" ?>
 <cp:coreProperties xmlns:cp="http://schemas.openxmlformats.org/package/2006/metadata/core-properties" xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:dcmitype="http://purl.org/dc/dcmitype/" xmlns:dcterms="http://purl.org/dc/terms/" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
   <cp:category>library</cp:category>
-  <dcterms:created xsi:type="dcterms:W3CDTF">2026-08-21T05:57:18Z</dcterms:created>
+  <dcterms:created xsi:type="dcterms:W3CDTF">2026-08-21T08:40:27Z</dcterms:created>
   <dc:creator>shia</dc:creator>
   <cp:lastModifiedBy>shia</cp:lastModifiedBy>
-  <dcterms:modified xsi:type="dcterms:W3CDTF">2026-08-21T05:57:45Z</dcterms:modified>
+  <dcterms:modified xsi:type="dcterms:W3CDTF">2026-08-21T08:40:36Z</dcterms:modified>
   <cp:revision>1.1</cp:revision>
   <cp:version>R2026a</cp:version>
 </cp:coreProperties>
@@ -58,7 +58,7 @@ __MWOPC_PART_BEGIN__ /metadata/mwcoreProperties.xml
 __MWOPC_PART_BEGIN__ /metadata/mwcorePropertiesExtension.xml
 <?xml version="1.0" encoding="UTF-8" standalone="yes" ?>
 <mwcoreProperties xmlns="http://schemas.mathworks.com/package/2014/corePropertiesExtension">
-  <uuid>195232b8-0422-4dd1-abc3-156e57bc3e08</uuid>
+  <uuid>b8ac962e-9fde-42c5-86d9-a95904f6841c</uuid>
 </mwcoreProperties>
 
 __MWOPC_PART_BEGIN__ /metadata/mwcorePropertiesReleaseInfo.xml
@@ -105,7 +105,7 @@ __MWOPC_PART_BEGIN__ /simulink/blockdiagram.xml
 <?xml version="1.0" encoding="utf-8"?>
 <ModelInformation Version="1.0">
   <Library>
-    <P Name="ModelUUID">e9669770-2891-4d75-a103-6d4a1cb50035</P>
+    <P Name="ModelUUID">5b61f6cb-9ecf-4238-865e-fad8d9370aad</P>
     <P Name="LibraryType">BlockLibrary</P>
     <P Name="LibraryBase" Ref="bdmxdata:LibraryBase_bd"/>
     <P Name="LastSavedArchitecture">maca64</P>
@@ -300,8 +300,8 @@ __MWOPC_PART_BEGIN__ /simulink/configSetInfo.xml
 __MWOPC_PART_BEGIN__ /simulink/modelDictionary.xml
 <?xml version="1.0" encoding="UTF-8"?>
 <MF0 version="1.1" defaultPackage="slid" packageUris="http://schema.mathworks.com/mf0/slid/R2025a_20251111">
-  <System type="System" uuid="9e45b974-69ca-47a4-85c1-8c05fb5e863e">
-    <Interface type="Interface" uuid="d7408371-70f3-485d-9ebc-15c2b319866b"/>
+  <System type="System" uuid="713e7eea-9d8e-4c53-b33c-3b1f7a4336d5">
+    <Interface type="Interface" uuid="0e9f8d0d-ed67-4874-b5e7-ea420c33ad85"/>
   </System>
 </MF0>
 __MWOPC_PART_BEGIN__ /simulink/systems/system_root.xml
@@ -626,7 +626,7 @@ __MWOPC_PART_BEGIN__ /simulink/windowsInfo.xml
       </Array>
       <P Name="WindowState" Class="char">AAAA/wAAAAD9AAAAAwAAAAAAAAC9AAAB+PwCAAAABPsAAAAWAEQAbwBjAGsAVwBpAGQAZwBlAHQAMwEAAAAxAAAB+AAAAAAAAAAA+wAAABYARABvAGMAawBXAGkAZABnAGUAdAA0AAAAAAD/////AAAAAAAAAAD7AAAAUgBHAEwAVQBFADIAIAB0AHIAZQBlACAAYwBvAG0AcABvAG4AZQBuAHQALwBHAEwAVQBFADIAIAB0AHIAZQBlACAAYwBvAG0AcABvAG4AZQBuAHQAAAAAAP////8AAABjAP////sAAABgAFMAaQBtAHUAbABpAG4AawA6AEUAZABpAHQAbwByADoAUgBlAGYAZQByAGUAbgBjAGUAZABGAGkAbABlAHMALwBSAGUAZgBlAHIAZQBuAGMAZQBkACAARgBpAGwAZQBzAAAAAAD/////AAAAhwD///8AAAABAAAAAAAAAAD8AgAAAAH7AAAAVABHAEwAVQBFADIAOgBQAHIAbwBwAGUAcgB0AHkASQBuAHMAcABlAGMAdABvAHIALwBQAHIAbwBwAGUAcgB0AHkAIABJAG4AcwBwAGUAYwB0AG8AcgAAAAAA/////wAAAawA////AAAAAwAAAAAAAAAA/AEAAAAB+/////8AAAAAAP////8AAAJ5AP///wAAA9QAAAI/AAAAAQAAAAIAAAABAAAAAvwAAAAA</P>
       <Array PropName="PersistedApps" Type="Cell" Dimension="0*1"/>
-      <P Name="WindowUuid" Class="char">8247a9e0-16d9-4e0f-ab7f-45fb6ab00991</P>
+      <P Name="WindowUuid" Class="char">6c568db4-1322-465c-b37e-a4c7d1418781</P>
     </Object>
     <P Name="BDUuid" Class="char"/>
   </Object>

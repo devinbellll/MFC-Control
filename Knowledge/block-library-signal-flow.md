@@ -120,7 +120,7 @@ decoupled loop below, plus one more:
   stay as-is, since they don't need to know about `alpha`.
 - Only a **decoupled** MIMO estimator exists — there is no coupled or
   sliding-window MIMO variant (mirroring the SISO library: coupled folding
-  and Simpson quadrature were never generalized to a matrix `alpha`). Wire an
+  and the window taps were never generalized to a matrix `alpha`). Wire an
   explicit feedback law into `fb`, same as any decoupled SISO loop.
 - **The same `alpha` matrix must be fed to both blocks.** This matters more
   than in the scalar case: an estimator/command mismatch does not just bias

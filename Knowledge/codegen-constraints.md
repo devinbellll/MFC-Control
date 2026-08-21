@@ -29,7 +29,7 @@ end
 kernel = mfc_siso.window_kernel(p.model_order, win, p.Ts);
 ```
 
-The quadrature kernel is built for **every** variant, including algebraic ones
+The window taps are built for **every** variant, including algebraic ones
 that never evaluate it, so `cfg` has a single concrete type. The algebraic
 window value is sanitized (`max(2, round(...))`) only so that any positive
 smoother memory — including a non-integer one — remains an acceptable input to
@@ -110,9 +110,7 @@ function n_buf = bufferLength(obj)
     if strncmp(obj.estimator_type, 'Algebraic', 9)
         n_buf = 1;
     else
-        n = obj.est_filter_window;
-        n = n + mod(n, 2);
-        n_buf = n + 1;
+        n_buf = obj.est_filter_window + 1;
     end
 end
 ```
@@ -121,7 +119,7 @@ end
 
 ## 6. `est_filter_window` is Nontunable
 
-It sizes the window buffers and the quadrature kernel. Making it tunable would
+It sizes the window buffers and the FIR taps. Making it tunable would
 mean re-sizing a discrete state at run time, which is not possible under
 codegen. `Ts` is Nontunable for the same class of reason — it fixes the block's
 sample time.
