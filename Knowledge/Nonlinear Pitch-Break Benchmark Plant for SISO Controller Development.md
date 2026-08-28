@@ -15,7 +15,6 @@ created: 2026-08-05
 implementation: "models/plants/siso_pitch_break/pitchbreak_params.m"
 model: "models/plants/siso_pitch_break/siso_pitch_break.slx"
 ---
-
 # Nonlinear Pitch-Break Benchmark Plant for SISO Controller Development
 
 A deliberately minimal SISO test plant for controller development: a softening

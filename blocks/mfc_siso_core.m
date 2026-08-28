@@ -292,6 +292,29 @@ classdef mfc_siso_core < matlab.System
             obj.u_km1        = 0;
         end
 
+        % ---- save/load of the locked object ----------------------------
+        % cfg is PRIVATE and is built in setupImpl, so the base class
+        % does not carry it through a save/load of a LOCKED object. Simulink
+        % saves and clones locked System objects for fast restart and for
+        % array sim(), and without these two methods cfg comes back
+        % empty on every run after the first -- which surfaces as
+        % "simulations completed with errors at indices [2 3]" while
+        % individual 1 succeeds, i.e. it reads as a bad candidate rather than
+        % a broken block. Measured 2026-08-21 driving a GA over this block.
+        function s = saveObjectImpl(obj)
+            s = saveObjectImpl@matlab.System(obj);
+            if isLocked(obj)
+                s.cfg = obj.cfg;
+            end
+        end
+
+        function loadObjectImpl(obj, s, wasLocked)
+            if wasLocked
+                obj.cfg = s.cfg;
+            end
+            loadObjectImpl@matlab.System(obj, s, wasLocked);
+        end
+
         function [sz, dt, cp] = getDiscreteStateSpecificationImpl(obj, name)
             switch name
                 case {'y_buf', 'u_buf'}

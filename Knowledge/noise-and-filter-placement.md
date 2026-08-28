@@ -17,13 +17,13 @@ Two questions settle almost every case:
 
 ## The two filter families in play
 
-| | sliding-window taps | `mfc_iir_smoother` |
-|---|---|---|
-| type | FIR | IIR |
-| poles | none | two, repeated real at $W/(W+1)$ |
-| memory | exact: gone after $T_w$ | infinite tail |
-| stability | cannot fail | a design question |
-| cost | $n{+}1$ multiplies, $n{+}1$ stored | 3 multiplies, 2 stored |
+|           | sliding-window taps                | `mfc_iir_smoother`              |
+| --------- | ---------------------------------- | ------------------------------- |
+| type      | FIR                                | IIR                             |
+| poles     | none                               | two, repeated real at $W/(W+1)$ |
+| memory    | exact: gone after $T_w$            | infinite tail                   |
+| stability | cannot fail                        | a design question               |
+| cost      | $n{+}1$ multiplies, $n{+}1$ stored | 3 multiplies, 2 stored          |
 
 Everything else in the discussion — Butterworth, Bessel, exponential
 forgetting, an observer — is IIR. Poles mean recursion.
@@ -63,12 +63,12 @@ finally collapses.
 Consequence, measured on the algebraic estimator at matched delay (each 2-pole
 stage costs $2W$ samples of lag):
 
-| configuration | delay [samples] | $\hat F$ noise |
-|---|---|---|
-| internal $W = 160$ | 320 | 0.071 |
-| internal $W = 10$ + post-filter $W = 40$ | 100 | 0.077 |
-| internal $W = 640$ | 1280 | 0.020 |
-| internal $W = 40$ + post-filter $W = 40$ | 160 | 0.024 |
+| configuration                            | delay [samples] | $\hat F$ noise |
+| ---------------------------------------- | --------------- | -------------- |
+| internal $W = 160$                       | 320             | 0.071          |
+| internal $W = 10$ + post-filter $W = 40$ | 100             | 0.077          |
+| internal $W = 640$                       | 1280            | 0.020          |
+| internal $W = 40$ + post-filter $W = 40$ | 160             | 0.024          |
 
 **Same noise for 3–8x less lag**, purely from splitting the same filtering into
 two stages. So: when a single window is not quiet enough, cascade an
@@ -84,11 +84,11 @@ $\hat F$ after it (for noise, it is — they commute). It is not, and the damage
 does not need any noise to appear. On a **noiseless** run with a moving input
 $u = \cos(2\pi \cdot 3t)$ and true $F = 3$:
 
-| configuration | mean $\hat F$ | ripple |
-|---|---|---|
-| no extra filter | 2.985 | 0.018 |
-| pre-filter $y$, $W = 40$ | 2.820 | **0.957** |
-| post-filter $\hat F$, $W = 40$ | 2.980 | 0.011 |
+| configuration                  | mean $\hat F$ | ripple    |
+| ------------------------------ | ------------- | --------- |
+| no extra filter                | 2.985         | 0.018     |
+| pre-filter $y$, $W = 40$       | 2.820         | **0.957** |
+| post-filter $\hat F$, $W = 40$ | 2.980         | 0.011     |
 
 Every estimator here computes something of the form $(\text{terms in } y) -
 \alpha u$. Delay $y$ and you have delayed one side of that subtraction and not
@@ -168,10 +168,10 @@ $Y = y + K_d \int y$, and an *integral* of the measurement attenuates noise
 instead of amplifying it. Same plant, same closed-loop poles, no filter and no
 added lag:
 
-| | $\operatorname{std}(u)$ | from $\hat F$ | from the D term |
-|---|---|---|---|
-| classic iPD | 1.152 | 0.117 | 1.157 |
-| Riachy (no D) | **0.120** | 0.119 | — |
+|               | $\operatorname{std}(u)$ | from $\hat F$ | from the D term |
+| ------------- | ----------------------- | ------------- | --------------- |
+| classic iPD   | 1.152                   | 0.117         | 1.157           |
+| Riachy (no D) | **0.120**               | 0.119         | —               |
 
 A 10x quieter command for free. The residue is then the $\hat F$ path, which
 *is* worth post-filtering, because now it is the term that dominates.

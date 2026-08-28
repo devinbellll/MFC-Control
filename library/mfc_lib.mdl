@@ -17,6 +17,7 @@ __MWOPC_PART_BEGIN__ /[Content_Types].xml
   <Override ContentType="application/vnd.mathworks.simulink.mdl+xml" PartName="/simulink/bddefaults.xml"/>
   <Override ContentType="application/vnd.mathworks.simulink.mdl+xml" PartName="/simulink/blockdiagram.xml"/>
   <Override ContentType="application/vnd.mathworks.simulink.configSet+xml" PartName="/simulink/configSet0.xml"/>
+  <Override ContentType="application/vnd.mathworks.simulink.hdlparams+xml" PartName="/simulink/hdlParams.xml"/>
   <Override ContentType="application/vnd.mathworks.simulink.mf0+xml" PartName="/simulink/modelDictionary.xml"/>
   <Override ContentType="application/vnd.mathworks.simulink.mdl+xml" PartName="/simulink/systems/system_root.xml"/>
   <Override ContentType="application/vnd.mathworks.simulink.blockDiagram+xml" PartName="/simulink/windowsInfo.xml"/>
@@ -39,10 +40,10 @@ __MWOPC_PART_BEGIN__ /metadata/coreProperties.xml
 <?xml version="1.0" encoding="UTF-8" standalone="yes" ?>
 <cp:coreProperties xmlns:cp="http://schemas.openxmlformats.org/package/2006/metadata/core-properties" xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:dcmitype="http://purl.org/dc/dcmitype/" xmlns:dcterms="http://purl.org/dc/terms/" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
   <cp:category>library</cp:category>
-  <dcterms:created xsi:type="dcterms:W3CDTF">2026-08-21T08:40:27Z</dcterms:created>
-  <dc:creator>shia</dc:creator>
-  <cp:lastModifiedBy>shia</cp:lastModifiedBy>
-  <dcterms:modified xsi:type="dcterms:W3CDTF">2026-08-21T08:40:36Z</dcterms:modified>
+  <dcterms:created xsi:type="dcterms:W3CDTF">2026-08-28T09:01:16Z</dcterms:created>
+  <dc:creator>devinbellll</dc:creator>
+  <cp:lastModifiedBy>devinbellll</cp:lastModifiedBy>
+  <dcterms:modified xsi:type="dcterms:W3CDTF">2026-08-28T09:01:19Z</dcterms:modified>
   <cp:revision>1.1</cp:revision>
   <cp:version>R2026a</cp:version>
 </cp:coreProperties>
@@ -58,24 +59,25 @@ __MWOPC_PART_BEGIN__ /metadata/mwcoreProperties.xml
 __MWOPC_PART_BEGIN__ /metadata/mwcorePropertiesExtension.xml
 <?xml version="1.0" encoding="UTF-8" standalone="yes" ?>
 <mwcoreProperties xmlns="http://schemas.mathworks.com/package/2014/corePropertiesExtension">
-  <uuid>b8ac962e-9fde-42c5-86d9-a95904f6841c</uuid>
+  <uuid>25521908-0474-42bd-b253-170209a4bae0</uuid>
 </mwcoreProperties>
 
 __MWOPC_PART_BEGIN__ /metadata/mwcorePropertiesReleaseInfo.xml
 <?xml version="1.0" encoding="UTF-8"?>
 <!-- Version information for MathWorks R2026a Release -->
 <MathWorks_version_info>
-  <version>26.1.0.3312084</version>
+  <version>26.1.0.3276743</version>
   <release>R2026a</release>
-  <description>Update 4</description>
-  <date>Jun 30 2026</date>
-  <checksum>4132326121</checksum>
+  <description>Update 3</description>
+  <date>May 27 2026</date>
+  <checksum>23673432</checksum>
 </MathWorks_version_info>
 
 __MWOPC_PART_BEGIN__ /simulink/_rels/blockdiagram.xml.rels
 <?xml version="1.0" encoding="UTF-8" standalone="yes" ?>
 <Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
   <Relationship Id="LibraryBase_bd" Target="bdmxdata/LibraryBase_bd.mxarray" Type="http://schemas.mathworks.com/simulinkModel/2015/relationships/modelMxArray"/>
+  <Relationship Id="hdlParams" Target="hdlParams.xml" Type="http://schemas.mathworks.com/simulink/2021/relationships/hdlParams"/>
   <Relationship Id="system_root" Target="systems/system_root.xml" Type="http://schemas.mathworks.com/simulink/2010/relationships/system"/>
   <Relationship Id="windowsInfo" Target="windowsInfo.xml" Type="http://schemas.mathworks.com/simulinkModel/2019/relationships/windowsInfo"/>
 </Relationships>
@@ -105,7 +107,7 @@ __MWOPC_PART_BEGIN__ /simulink/blockdiagram.xml
 <?xml version="1.0" encoding="utf-8"?>
 <ModelInformation Version="1.0">
   <Library>
-    <P Name="ModelUUID">5b61f6cb-9ecf-4238-865e-fad8d9370aad</P>
+    <P Name="ModelUUID">c3205ee1-b012-4cc4-8411-6115ecc757ec</P>
     <P Name="LibraryType">BlockLibrary</P>
     <P Name="LibraryBase" Ref="bdmxdata:LibraryBase_bd"/>
     <P Name="LastSavedArchitecture">maca64</P>
@@ -133,7 +135,7 @@ __MWOPC_PART_BEGIN__ /simulink/configSet0.xml
     <P Name="CurrentDlgPage" Class="char">Solver</P>
     <P Name="ConfigPrmDlgPosition" Class="double">[0.0, 0.0, 0.0, 0.0]</P>
     <P Name="Version" Class="char">26.0.0</P>
-    <Array PropName="Components" Type="Simulink.ConfigComponent" Dimension="9*1">
+    <Array PropName="Components" Type="Simulink.ConfigComponent" Dimension="10*1">
       <Object ObjectID="2" ClassName="Simulink.SolverCC">
         <P Name="SolverName" Class="char">VariableStepAuto</P>
         <P Name="ODENIntegrationMethod" Class="char">ode3</P>
@@ -287,6 +289,10 @@ __MWOPC_PART_BEGIN__ /simulink/configSet0.xml
         <P Name="Description" Class="char">Simulink Coverage Configuration Component</P>
         <P Name="Version" Class="char">26.0.0</P>
       </Object>
+      <Object ObjectID="13" ClassName="hdlcoderui.hdlcc">
+        <P Name="Description" Class="char">HDL Coder custom configuration component</P>
+        <P Name="Version" Class="char">26.0.0</P>
+      </Object>
     </Array>
   </Object>
 </ConfigSet>
@@ -297,20 +303,31 @@ __MWOPC_PART_BEGIN__ /simulink/configSetInfo.xml
   <ConfigSet PartName="/simulink/configSet0.xml" Active="true">Configuration</ConfigSet>
 </ConfigSetInfo>
 
+__MWOPC_PART_BEGIN__ /simulink/hdlParams.xml
+<?xml version="1.0" encoding="utf-8"?>
+<HDLParams>
+  <Object PropName="HDLParams" ObjectID="1" ClassName="slprops.hdlmdlprops">
+    <Array PropName="mdlProps" Type="Cell" Dimension="1*2">
+      <Cell Class="char">HDLSubsystem</Cell>
+      <Cell Class="char">$bdroot</Cell>
+    </Array>
+  </Object>
+</HDLParams>
+
 __MWOPC_PART_BEGIN__ /simulink/modelDictionary.xml
 <?xml version="1.0" encoding="UTF-8"?>
 <MF0 version="1.1" defaultPackage="slid" packageUris="http://schema.mathworks.com/mf0/slid/R2025a_20251111">
-  <System type="System" uuid="713e7eea-9d8e-4c53-b33c-3b1f7a4336d5">
-    <Interface type="Interface" uuid="0e9f8d0d-ed67-4874-b5e7-ea420c33ad85"/>
+  <System type="System" uuid="af16e8d1-92af-477f-bf30-3e70f7057295">
+    <Interface type="Interface" uuid="4b909475-43a2-4f2a-aa3d-fcac39ac154b"/>
   </System>
 </MF0>
 __MWOPC_PART_BEGIN__ /simulink/systems/system_root.xml
 <?xml version="1.0" encoding="utf-8"?>
 <System>
-  <P Name="Location">[30, 30, 1010, 778]</P>
+  <P Name="Location">[30, 33, 1010, 781]</P>
   <P Name="Open">on</P>
   <P Name="ReportName">simulink-default.rpt</P>
-  <P Name="SIDHighWatermark">23</P>
+  <P Name="SIDHighWatermark">39</P>
   <Block BlockType="MATLABSystem" Name="Command (inversion)" SID="17">
     <PortCounts in="3" out="1"/>
     <P Name="Position">[40, 560, 220, 650]</P>
@@ -324,10 +341,10 @@ __MWOPC_PART_BEGIN__ /simulink/systems/system_root.xml
     <P Name="use_live_alpha">off</P>
     <P Name="SimulateUsing">Code generation</P>
   </Block>
-  <Block BlockType="MATLABSystem" Name="Command (inversion, matrix alpha)" SID="21">
+  <Block BlockType="MATLABSystem" Name="Command (inversion, matrix alpha)" SID="33">
     <PortCounts in="3" out="1"/>
-    <P Name="Position">[340, 740, 520, 830]</P>
-    <P Name="ZOrder">14</P>
+    <P Name="Position">[940, 920, 1120, 1010]</P>
+    <P Name="ZOrder">20</P>
     <P Name="System">mfc_command_mimo_block</P>
     <P Name="MaskType">mfc_command_mimo_block</P>
     <P Name="alpha">eye( 2 )</P>
@@ -352,6 +369,21 @@ __MWOPC_PART_BEGIN__ /simulink/systems/system_root.xml
     <P Name="use_live_alpha">off</P>
     <P Name="SimulateUsing">Code generation</P>
   </Block>
+  <Block BlockType="MATLABSystem" Name="F-hat Alg 1st (coupled, matrix gains)" SID="27">
+    <PortCounts in="3" out="1"/>
+    <P Name="Position">[40, 920, 220, 1010]</P>
+    <P Name="ZOrder">17</P>
+    <P Name="System">mfc_fhat_alg1_coupled_mimo_block</P>
+    <P Name="MaskType">mfc_fhat_alg1_coupled_mimo_block</P>
+    <P Name="alpha">eye( 2 )</P>
+    <P Name="Kp">25 * eye( 2 )</P>
+    <P Name="n">2</P>
+    <P Name="Ts">0.01</P>
+    <P Name="est_filter_window">10</P>
+    <P Name="est_hold_time">0.1</P>
+    <P Name="use_live_alpha">off</P>
+    <P Name="SimulateUsing">Code generation</P>
+  </Block>
   <Block BlockType="MATLABSystem" Name="F-hat Alg 1st (decoupled)" SID="5">
     <PortCounts in="3" out="1"/>
     <P Name="Position">[40, 200, 220, 290]</P>
@@ -359,6 +391,20 @@ __MWOPC_PART_BEGIN__ /simulink/systems/system_root.xml
     <P Name="System">mfc_fhat_alg1_decoupled_block</P>
     <P Name="MaskType">mfc_fhat_alg1_decoupled_block</P>
     <P Name="alpha">1</P>
+    <P Name="Ts">0.01</P>
+    <P Name="est_filter_window">10</P>
+    <P Name="est_hold_time">0.1</P>
+    <P Name="use_live_alpha">off</P>
+    <P Name="SimulateUsing">Code generation</P>
+  </Block>
+  <Block BlockType="MATLABSystem" Name="F-hat Alg 1st (decoupled, matrix alpha)" SID="19">
+    <PortCounts in="3" out="1"/>
+    <P Name="Position">[40, 740, 220, 830]</P>
+    <P Name="ZOrder">13</P>
+    <P Name="System">mfc_fhat_alg1_decoupled_mimo_block</P>
+    <P Name="MaskType">mfc_fhat_alg1_decoupled_mimo_block</P>
+    <P Name="alpha">eye( 2 )</P>
+    <P Name="n">2</P>
     <P Name="Ts">0.01</P>
     <P Name="est_filter_window">10</P>
     <P Name="est_hold_time">0.1</P>
@@ -380,6 +426,22 @@ __MWOPC_PART_BEGIN__ /simulink/systems/system_root.xml
     <P Name="use_live_alpha">off</P>
     <P Name="SimulateUsing">Code generation</P>
   </Block>
+  <Block BlockType="MATLABSystem" Name="F-hat Alg 2nd (coupled, matrix gains)" SID="29">
+    <PortCounts in="3" out="1"/>
+    <P Name="Position">[340, 920, 520, 1010]</P>
+    <P Name="ZOrder">18</P>
+    <P Name="System">mfc_fhat_alg2_coupled_mimo_block</P>
+    <P Name="MaskType">mfc_fhat_alg2_coupled_mimo_block</P>
+    <P Name="alpha">eye( 2 )</P>
+    <P Name="Kp">25 * eye( 2 )</P>
+    <P Name="Kd">10 * eye( 2 )</P>
+    <P Name="n">2</P>
+    <P Name="Ts">0.01</P>
+    <P Name="est_filter_window">10</P>
+    <P Name="est_hold_time">0.1</P>
+    <P Name="use_live_alpha">off</P>
+    <P Name="SimulateUsing">Code generation</P>
+  </Block>
   <Block BlockType="MATLABSystem" Name="F-hat Alg 2nd (decoupled)" SID="7">
     <PortCounts in="3" out="1"/>
     <P Name="Position">[340, 200, 520, 290]</P>
@@ -393,10 +455,10 @@ __MWOPC_PART_BEGIN__ /simulink/systems/system_root.xml
     <P Name="use_live_alpha">off</P>
     <P Name="SimulateUsing">Code generation</P>
   </Block>
-  <Block BlockType="MATLABSystem" Name="F-hat Alg 2nd (decoupled, matrix alpha)" SID="19">
+  <Block BlockType="MATLABSystem" Name="F-hat Alg 2nd (decoupled, matrix alpha)" SID="21">
     <PortCounts in="3" out="1"/>
-    <P Name="Position">[40, 740, 220, 830]</P>
-    <P Name="ZOrder">13</P>
+    <P Name="Position">[340, 740, 520, 830]</P>
+    <P Name="ZOrder">14</P>
     <P Name="System">mfc_fhat_alg2_decoupled_mimo_block</P>
     <P Name="MaskType">mfc_fhat_alg2_decoupled_mimo_block</P>
     <P Name="alpha">eye( 2 )</P>
@@ -424,6 +486,24 @@ __MWOPC_PART_BEGIN__ /simulink/systems/system_root.xml
     <P Name="output_Y">off</P>
     <P Name="SimulateUsing">Code generation</P>
   </Block>
+  <Block BlockType="MATLABSystem" Name="F-hat Riachy 2nd (matrix gains)" SID="25">
+    <PortCounts in="3" out="1"/>
+    <P Name="Position">[940, 740, 1120, 830]</P>
+    <P Name="ZOrder">16</P>
+    <P Name="System">mfc_fhat_riachy2_mimo_block</P>
+    <P Name="MaskType">mfc_fhat_riachy2_mimo_block</P>
+    <P Name="alpha">eye( 2 )</P>
+    <P Name="Kd">10 * eye( 2 )</P>
+    <P Name="n">2</P>
+    <P Name="estimator">Algebraic (growing window)</P>
+    <P Name="Ts">0.01</P>
+    <P Name="est_filter_window">10</P>
+    <P Name="est_hold_time">0.1</P>
+    <P Name="window_samples">10</P>
+    <P Name="use_live_alpha">off</P>
+    <P Name="output_Y">off</P>
+    <P Name="SimulateUsing">Code generation</P>
+  </Block>
   <Block BlockType="MATLABSystem" Name="F-hat Sliding Window" SID="9">
     <PortCounts in="3" out="1"/>
     <P Name="Position">[640, 200, 820, 290]</P>
@@ -437,6 +517,37 @@ __MWOPC_PART_BEGIN__ /simulink/systems/system_root.xml
     <P Name="use_live_alpha">off</P>
     <P Name="SimulateUsing">Code generation</P>
   </Block>
+  <Block BlockType="MATLABSystem" Name="F-hat Sliding Window (matrix alpha)" SID="23">
+    <PortCounts in="3" out="1"/>
+    <P Name="Position">[640, 740, 820, 830]</P>
+    <P Name="ZOrder">15</P>
+    <P Name="System">mfc_fhat_window_mimo_block</P>
+    <P Name="MaskType">mfc_fhat_window_mimo_block</P>
+    <P Name="alpha">eye( 2 )</P>
+    <P Name="n">2</P>
+    <P Name="model_order">Second order (ddot_y = F + alpha*u)</P>
+    <P Name="Ts">0.01</P>
+    <P Name="window_samples">10</P>
+    <P Name="use_live_alpha">off</P>
+    <P Name="SimulateUsing">Code generation</P>
+  </Block>
+  <Block BlockType="MATLABSystem" Name="F-hat dev bench (decoupled grid)" SID="37">
+    <PortCounts in="3" out="1"/>
+    <P Name="Position">[340, 1100, 520, 1190]</P>
+    <P Name="ZOrder">22</P>
+    <P Name="System">mfc_fhat_decoupled_dev_block</P>
+    <P Name="MaskType">mfc_fhat_decoupled_dev_block</P>
+    <P Name="n">1</P>
+    <P Name="model_order">Second order (ddot_y = F + alpha*u)</P>
+    <P Name="estimator">Algebraic (growing window)</P>
+    <P Name="alpha">1</P>
+    <P Name="use_live_alpha">off</P>
+    <P Name="SimulateUsing">Code generation</P>
+    <P Name="est_filter_window">10</P>
+    <P Name="est_hold_time">0.1</P>
+    <P Name="window_samples">10</P>
+    <P Name="Ts">0.01</P>
+  </Block>
   <Block BlockType="MATLABSystem" Name="IIR Smoother" SID="3">
     <PortCounts in="1" out="1"/>
     <P Name="Position">[340, 40, 520, 130]</P>
@@ -447,6 +558,45 @@ __MWOPC_PART_BEGIN__ /simulink/systems/system_root.xml
     <P Name="Ts">0.01</P>
     <P Name="output_derivatives">off</P>
     <P Name="SimulateUsing">Code generation</P>
+  </Block>
+  <Block BlockType="MATLABSystem" Name="IIR Smoother (n channels)" SID="31">
+    <PortCounts in="1" out="1"/>
+    <P Name="Position">[640, 920, 820, 1010]</P>
+    <P Name="ZOrder">19</P>
+    <P Name="System">mfc_smoother_mimo_block</P>
+    <P Name="MaskType">mfc_smoother_mimo_block</P>
+    <P Name="window">10</P>
+    <P Name="n">2</P>
+    <P Name="Ts">0.01</P>
+    <P Name="output_derivatives">off</P>
+    <P Name="SimulateUsing">Code generation</P>
+  </Block>
+  <Block BlockType="MATLABSystem" Name="MFC Controller, n channels (dev bench)" SID="35">
+    <PortCounts in="3" out="5"/>
+    <P Name="Position">[40, 1100, 220, 1190]</P>
+    <P Name="ZOrder">21</P>
+    <P Name="System">mfc_mimo_core</P>
+    <P Name="MaskType">mfc_mimo_core</P>
+    <P Name="n">2</P>
+    <P Name="model_order">Second order (ddot_y = F + alpha*u)</P>
+    <P Name="controller_structure">Decoupled (measurement-driven estimator, explicit iP/iPD)</P>
+    <P Name="estimator_type">Algebraic (growing window)</P>
+    <P Name="alpha">eye( 2 )</P>
+    <P Name="Kp">25</P>
+    <P Name="Kd">10</P>
+    <P Name="Ki">0</P>
+    <P Name="SimulateUsing">Code generation</P>
+    <P Name="ref_filter_window">10</P>
+    <P Name="est_filter_window">10</P>
+    <P Name="command_filter">1</P>
+    <P Name="est_hold_time">0.1</P>
+    <P Name="use_ref_filter">on</P>
+    <P Name="use_control_sat">off</P>
+    <P Name="u_min">-600</P>
+    <P Name="u_max">600</P>
+    <P Name="use_external_command">off</P>
+    <P Name="use_live_alpha">off</P>
+    <P Name="Ts">0.01</P>
   </Block>
   <Block BlockType="MATLABSystem" Name="MFC SISO Controller" SID="1">
     <PortCounts in="3" out="5"/>
@@ -538,20 +688,76 @@ __MWOPC_PART_BEGIN__ /simulink/systems/system_root.xml
     <P Name="FontSize">9</P>
   </Annotation>
   <Annotation SID="20">
-    <P Name="Name">in: y (n-by-1) -- vector signals, square n-by-n alpha</P>
-    <P Name="Position">[130, 845, 333, 856]</P>
+    <P Name="Name">in: y (n-by-1) -- ff = dot_sp at 1st order</P>
+    <P Name="Position">[130, 845, 283, 856]</P>
     <P Name="InternalMargins">[0, 0, 0, 0]</P>
     <P Name="ZOrder">-10</P>
     <P Name="FontSize">9</P>
   </Annotation>
   <Annotation SID="22">
-    <P Name="Name">u = alpha\(-F_hat + ff - fb), vector signals</P>
-    <P Name="Position">[430, 845, 594, 856]</P>
+    <P Name="Name">in: y (n-by-1) -- vector signals, square n-by-n alpha</P>
+    <P Name="Position">[430, 845, 633, 856]</P>
     <P Name="InternalMargins">[0, 0, 0, 0]</P>
     <P Name="ZOrder">-11</P>
     <P Name="FontSize">9</P>
   </Annotation>
-  <Annotation SID="23">
+  <Annotation SID="24">
+    <P Name="Name">in: y (n-by-1) -- decoupled only; no internal smoothing</P>
+    <P Name="Position">[730, 845, 944, 856]</P>
+    <P Name="InternalMargins">[0, 0, 0, 0]</P>
+    <P Name="ZOrder">-12</P>
+    <P Name="FontSize">9</P>
+  </Annotation>
+  <Annotation SID="26">
+    <P Name="Name">in: y (n-by-1) -- Y = y + Kd*int y, square n-by-n Kd and alpha</P>
+    <P Name="Position">[1030, 845, 1270, 856]</P>
+    <P Name="InternalMargins">[0, 0, 0, 0]</P>
+    <P Name="ZOrder">-13</P>
+    <P Name="FontSize">9</P>
+  </Annotation>
+  <Annotation SID="28">
+    <P Name="Name">in: err (n-by-1) -- matrix Kp folded, no Kd at 1st order</P>
+    <P Name="Position">[130, 1025, 341, 1036]</P>
+    <P Name="InternalMargins">[0, 0, 0, 0]</P>
+    <P Name="ZOrder">-14</P>
+    <P Name="FontSize">9</P>
+  </Annotation>
+  <Annotation SID="30">
+    <P Name="Name">in: err (n-by-1) -- matrix Kp and Kd folded, fb -&gt; Ground</P>
+    <P Name="Position">[430, 1025, 651, 1036]</P>
+    <P Name="InternalMargins">[0, 0, 0, 0]</P>
+    <P Name="ZOrder">-15</P>
+    <P Name="FontSize">9</P>
+  </Annotation>
+  <Annotation SID="32">
+    <P Name="Name">channel-wise; the F_hat post-filter for the window estimator</P>
+    <P Name="Position">[730, 1025, 966, 1036]</P>
+    <P Name="InternalMargins">[0, 0, 0, 0]</P>
+    <P Name="ZOrder">-16</P>
+    <P Name="FontSize">9</P>
+  </Annotation>
+  <Annotation SID="34">
+    <P Name="Name">u = alpha\(-F_hat + ff - fb), vector signals</P>
+    <P Name="Position">[1030, 1025, 1194, 1036]</P>
+    <P Name="InternalMargins">[0, 0, 0, 0]</P>
+    <P Name="ZOrder">-17</P>
+    <P Name="FontSize">9</P>
+  </Annotation>
+  <Annotation SID="36">
+    <P Name="Name">every non-Riachy variant on the mask; n = 1 reproduces the SISO core</P>
+    <P Name="Position">[130, 1205, 414, 1216]</P>
+    <P Name="InternalMargins">[0, 0, 0, 0]</P>
+    <P Name="ZOrder">-18</P>
+    <P Name="FontSize">9</P>
+  </Annotation>
+  <Annotation SID="38">
+    <P Name="Name">in: y -- order/estimator/n on the mask, fixed ports; swap in the specific block to ship</P>
+    <P Name="Position">[430, 1205, 760, 1216]</P>
+    <P Name="InternalMargins">[0, 0, 0, 0]</P>
+    <P Name="ZOrder">-19</P>
+    <P Name="FontSize">9</P>
+  </Annotation>
+  <Annotation SID="39">
     <P Name="Name">Closing a composed loop
 
 err = y - sp_filt   (measurement minus FILTERED setpoint, this sign)
@@ -565,7 +771,7 @@ coupled estimator:    command/fb -&gt; Ground
                       (or a Ki integrator on err, if you want one)</P>
     <P Name="Position">[700, 560, 1012, 672]</P>
     <P Name="InternalMargins">[0, 0, 0, 0]</P>
-    <P Name="ZOrder">-12</P>
+    <P Name="ZOrder">-20</P>
   </Annotation>
 </System>
 
@@ -575,13 +781,13 @@ __MWOPC_PART_BEGIN__ /simulink/windowsInfo.xml
   <Object PropName="BdWindowsInfo" ObjectID="1" ClassName="Simulink.BDWindowsInfo">
     <Object PropName="WindowsInfo" ObjectID="2" ClassName="Simulink.WindowInfo">
       <P Name="IsActive" Class="logical">1</P>
-      <P Name="Location" Class="double">[30.0, 30.0, 980.0, 748.0]</P>
+      <P Name="Location" Class="double">[30.0, 33.0, 980.0, 748.0]</P>
       <Object PropName="ModelBrowserInfo" ObjectID="3" ClassName="Simulink.ModelBrowserInfo">
         <P Name="Visible" Class="logical">1</P>
         <P Name="DockPosition" Class="char">Left</P>
         <P Name="Width" Class="int32">50</P>
         <P Name="Height" Class="int32">50</P>
-        <P Name="Filter" Class="int32">8</P>
+        <P Name="Filter" Class="int32">9</P>
         <P Name="Minimized" Class="char">On</P>
       </Object>
       <Object PropName="ExplorerBarInfo" ObjectID="4" ClassName="Simulink.ExplorerBarInfo">
@@ -626,7 +832,7 @@ __MWOPC_PART_BEGIN__ /simulink/windowsInfo.xml
       </Array>
       <P Name="WindowState" Class="char">AAAA/wAAAAD9AAAAAwAAAAAAAAC9AAAB+PwCAAAABPsAAAAWAEQAbwBjAGsAVwBpAGQAZwBlAHQAMwEAAAAxAAAB+AAAAAAAAAAA+wAAABYARABvAGMAawBXAGkAZABnAGUAdAA0AAAAAAD/////AAAAAAAAAAD7AAAAUgBHAEwAVQBFADIAIAB0AHIAZQBlACAAYwBvAG0AcABvAG4AZQBuAHQALwBHAEwAVQBFADIAIAB0AHIAZQBlACAAYwBvAG0AcABvAG4AZQBuAHQAAAAAAP////8AAABjAP////sAAABgAFMAaQBtAHUAbABpAG4AawA6AEUAZABpAHQAbwByADoAUgBlAGYAZQByAGUAbgBjAGUAZABGAGkAbABlAHMALwBSAGUAZgBlAHIAZQBuAGMAZQBkACAARgBpAGwAZQBzAAAAAAD/////AAAAhwD///8AAAABAAAAAAAAAAD8AgAAAAH7AAAAVABHAEwAVQBFADIAOgBQAHIAbwBwAGUAcgB0AHkASQBuAHMAcABlAGMAdABvAHIALwBQAHIAbwBwAGUAcgB0AHkAIABJAG4AcwBwAGUAYwB0AG8AcgAAAAAA/////wAAAawA////AAAAAwAAAAAAAAAA/AEAAAAB+/////8AAAAAAP////8AAAJ5AP///wAAA9QAAAI/AAAAAQAAAAIAAAABAAAAAvwAAAAA</P>
       <Array PropName="PersistedApps" Type="Cell" Dimension="0*1"/>
-      <P Name="WindowUuid" Class="char">6c568db4-1322-465c-b37e-a4c7d1418781</P>
+      <P Name="WindowUuid" Class="char">95413795-7672-4366-b693-6ee0a6d70495</P>
     </Object>
     <P Name="BDUuid" Class="char"/>
   </Object>
