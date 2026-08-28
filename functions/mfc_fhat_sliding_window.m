@@ -28,6 +28,12 @@ function [F_hat, state, dbg] = mfc_fhat_sliding_window(y, u_prev, alpha, t, kern
 %
 %   The estimate is held at zero until the window has filled (t > Tw).
 %
+%   VECTOR-SAFE. y, u_prev and F_hat may be m-by-1 with a square m-by-m
+%   alpha (the MIMO ultra-local model), in which case the buffers hold one
+%   column per channel. The taps are scalar quadrature weights and are
+%   shared across channels -- one window serves the whole vector, exactly
+%   as the algebraic estimator's scalar t^2 denominator does.
+%
 %   Inputs
 %     y      : current measurement
 %     u_prev : command actually applied over the last sample (newest window
@@ -37,8 +43,9 @@ function [F_hat, state, dbg] = mfc_fhat_sliding_window(y, u_prev, alpha, t, kern
 %     t      : current time [s], only used for the window-fill hold
 %     kernel : precomputed taps from MFC_SISO.WINDOW_KERNEL
 %     state  : struct, fields used/updated here:
-%                .y_buf [(n+1)x1] measurement window, newest last
-%                .u_buf [(n+1)x1] applied-input window, newest last
+%                .y_buf [(n+1)xm] measurement window, newest LAST (one
+%                       COLUMN per channel; m = 1 in the scalar case)
+%                .u_buf [(n+1)xm] applied-input window, newest last
 %
 %   Outputs
 %     F_hat : estimate of F (0 while the window is filling)
@@ -53,21 +60,27 @@ function [F_hat, state, dbg] = mfc_fhat_sliding_window(y, u_prev, alpha, t, kern
 % instead of [buf(2:end); new]: identical result, but also valid for the 1x1
 % placeholder buffers of algebraic variants, whose (dead) copy of this code
 % is still compiled under code generation.
-state.y_buf        = circshift(state.y_buf, -1);
-state.y_buf(end)   = y;
-state.u_buf        = circshift(state.u_buf, -1);
-state.u_buf(end)   = u_prev;
+state.y_buf          = circshift(state.y_buf, -1);
+state.y_buf(end, :)  = y.';
+state.u_buf          = circshift(state.u_buf, -1);
+state.u_buf(end, :)  = u_prev.';
 
 % One multiply-accumulate per window. The taps already carry the
 % prefactor; alpha is kept out of tap_u_unit so it can vary at run time.
-integral = kernel.tap_y.' * state.y_buf ...
-           + alpha * (kernel.tap_u_unit.' * state.u_buf);
+% The tap sums come out as 1-by-n rows and are transposed back to n-by-1
+% BEFORE alpha multiplies, so a matrix alpha mixes channels the same way
+% mfc_siso.command_mimo does. For n = 1 every transpose is a no-op and the
+% arithmetic is bit-identical to the scalar form.
+integral = (kernel.tap_y.' * state.y_buf).' ...
+           + alpha * (kernel.tap_u_unit.' * state.u_buf).';
 
 valid = t > kernel.Tw;                 % hold until the window has filled
 if valid
     F_hat = integral;
 else
-    F_hat = 0;
+    % zeros(size(y)), not 0: y may be a vector (matrix-alpha / MIMO use),
+    % and the held output must keep the port width.
+    F_hat = zeros(size(y));
 end
 
 % num/den fields are zero-filled so dbg has the same struct type as the

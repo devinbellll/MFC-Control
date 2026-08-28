@@ -21,6 +21,9 @@ function test_estimators()
 %     6. mfc_fhat_riachy2_block: ports, the algebraic/window selector, the
 %        optional Y output, and it being a thin wrapper over
 %        mfc_riachy_transform + the selected estimator
+%     7. mfc_fhat_riachy2_mimo_block: the same wrapper claim with matrix Kd
+%        and matrix alpha, plus port widths, the mask size checks, and the
+%        reduction to the SISO block when both matrices are diagonal
 %
 %   See also MFC_SISO_CORE, OCTAVE_SANITY, TEST_GOLDEN, TEST_COMPOSED.
 
@@ -267,6 +270,103 @@ function test_estimators()
                            step(rw, 0.3*sin(5*tk) + 0.2, cos(2*tk), tk)));
     end
     check(sprintf('riachy block: the estimator selector selects (gap=%.3g)', gap), gap > 1e-6);
+
+    % ---------------------------------------------------------------------
+    % 8) mfc_fhat_riachy2_mimo_block: the vector twin, OBJECT layer only.
+    %    Same thin-wrapper claim (mfc_riachy_transform with a matrix Kd,
+    %    then the selected estimator), plus the two things only the vector
+    %    block can get wrong: port widths and the n-vs-matrix mask checks.
+    %    The numerics and the loop wiring are tests/test_riachy.m section 4.
+    % ---------------------------------------------------------------------
+    n_m     = 2;
+    Kd_m    = [4 1; 0 6];
+    alpha_m = [2 0.3; -0.1 1.5];
+    for kind = {'Algebraic (growing window)', 'Sliding window (FIR)'}
+        algebraic = strncmp(kind{1}, 'Algebraic', 9);
+        mb = mfc_fhat_riachy2_mimo_block('estimator', kind{1}, 'n', n_m, ...
+                 'Ts', Ts, 'alpha', alpha_m, 'Kd', Kd_m, ...
+                 'est_filter_window', 10, 'est_hold_time', 0.1, ...
+                 'window_samples', 40, 'output_Y', true);
+
+        kern = mfc_siso.window_kernel(2, 40, Ts);
+        rs   = struct('int_km1', zeros(n_m,1), 'y_km1', zeros(n_m,1));
+        est  = struct('z_km1', zeros(n_m,1), 'z_km2', zeros(n_m,1), ...
+                      'num_filt_km1', zeros(n_m,1), 'num_filt_km2', zeros(n_m,1), ...
+                      'den_filt_km1', 0, 'den_filt_km2', 0, ...
+                      'y_buf', zeros(kern.n_intervals+1, n_m), ...
+                      'u_buf', zeros(kern.n_intervals+1, n_m));
+        worst = 0;  worstY = 0;  Fb = zeros(n_m, 200);
+        for k = 1:200
+            tk = (k-1)*Ts;
+            yk = [0.3*sin(5*tk) + 0.2; -0.15*sin(3*tk)];
+            uk = [cos(2*tk); 0.5*cos(7*tk)];
+            [Fk, Yk] = step(mb, yk, uk, tk);
+            Fb(:, k) = Fk;
+
+            [Yr, rs] = mfc_riachy_transform(yk, Kd_m, Ts, rs);
+            if algebraic
+                [Fr, est] = mfc_fhat_algebraic_second_order( ...
+                    Yr, uk, alpha_m, tk, Ts, 10, 0.1, 0, 0, est);
+            else
+                [Fr, est] = mfc_fhat_sliding_window(Yr, uk, alpha_m, tk, kern, est);
+            end
+            worst  = max(worst,  max(abs(Fk - Fr)));
+            worstY = max(worstY, max(abs(Yk - Yr)));
+        end
+        check(sprintf('riachy mimo (%s): F_hat and Y are n-by-1', kind{1}), ...
+              isequal(size(Fb(:, end)), [n_m 1]));
+        check(sprintf('riachy mimo (%s): equals transform + estimator (max|dF|=%.3g)', ...
+              kind{1}, worst), worst < 1e-12 && worstY < 1e-12);
+        check(sprintf('riachy mimo (%s): F_hat is not identically zero', kind{1}), ...
+              any(Fb(:) ~= 0));
+
+        reset(mb);
+        again = zeros(n_m, 200);
+        for k = 1:200
+            tk = (k-1)*Ts;
+            again(:, k) = step(mb, [0.3*sin(5*tk) + 0.2; -0.15*sin(3*tk)], ...
+                                   [cos(2*tk); 0.5*cos(7*tk)], tk);
+        end
+        check(sprintf('riachy mimo (%s): reset() restores the initial state', kind{1}), ...
+              isequal(Fb, again));
+    end
+
+    % Diagonal Kd and alpha: every channel must reduce to the SISO block.
+    % (Not bit-exact for the sliding window -- the vector buffers make the
+    % tap sum a matrix product, which BLAS accumulates in a different
+    % order; see tests/test_riachy.m section 4b.)
+    for kind = {'Algebraic (growing window)', 'Sliding window (FIR)'}
+        md = mfc_fhat_riachy2_mimo_block('estimator', kind{1}, 'n', 2, 'Ts', Ts, ...
+                 'alpha', alpha_r*eye(2), 'Kd', Kd_r*eye(2), 'window_samples', 40);
+        sd = mfc_fhat_riachy2_block('estimator', kind{1}, 'Ts', Ts, ...
+                 'alpha', alpha_r, 'Kd', Kd_r, 'window_samples', 40);
+        gapd = 0;
+        for k = 1:200
+            tk = (k-1)*Ts;
+            yk = 0.3*sin(5*tk) + 0.2;  uk = cos(2*tk);
+            gapd = max(gapd, max(abs(step(md, [yk; yk], [uk; uk], tk) - step(sd, yk, uk, tk))));
+        end
+        check(sprintf('riachy mimo (%s): diagonal gains reduce to the SISO block (%.3g)', ...
+              kind{1}, gapd), gapd < 1e-11);
+    end
+
+    % The mask checks: alpha and Kd must both be n-by-n.
+    bad_alpha = false;
+    try
+        mbad = mfc_fhat_riachy2_mimo_block('n', 3, 'alpha', eye(2), 'Kd', eye(3));
+        step(mbad, zeros(3,1), zeros(3,1), 0);
+    catch
+        bad_alpha = true;
+    end
+    bad_Kd = false;
+    try
+        mbad = mfc_fhat_riachy2_mimo_block('n', 2, 'alpha', eye(2), 'Kd', eye(3));
+        step(mbad, zeros(2,1), zeros(2,1), 0);
+    catch
+        bad_Kd = true;
+    end
+    check('riachy mimo: a wrong-size alpha is rejected', bad_alpha);
+    check('riachy mimo: a wrong-size Kd is rejected',    bad_Kd);
 
     fprintf('\n%d passed, %d failed\n', N_PASS, N_FAIL);
     if N_FAIL > 0

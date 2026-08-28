@@ -137,6 +137,87 @@ e_nff = max(abs(y_nff(end-500:end) - ramp(end-500:end)));
 check(sprintf('riachy loop: ff must carry Kd*dot_sp (err %.2e with, %.2e without)', ...
       e_ff, e_nff), e_nff > 5*e_ff);
 
+% =====================================================================
+% 4) NxN: the same trick with matrix Kd and matrix alpha
+% =====================================================================
+% Adding Kd*dot_y to both sides is linear, so the rewrite goes through
+% unchanged for a square Kd: Y = y + Kd*int y, ddot_Y = Fk + alpha*u with
+% Fk = F + Kd*dot_y, all n-by-1. Three things are checked: the transform
+% is the matrix product it claims to be, the estimators are vector-safe
+% and reduce EXACTLY to the scalar path, and a 2x2 loop closed on the
+% cross-coupled plant tracks both channels with no derivative anywhere.
+
+% 4a) matrix transform. A full (non-diagonal) Kd must mix channels; the
+% diagonal case must be two independent scalar transforms.
+Kd_m = [4 1; 0 6];  n = 2;
+rs_m = struct('int_km1', zeros(n,1), 'y_km1', zeros(n,1));
+rs_1 = struct('int_km1', 0, 'y_km1', 0);
+rs_2 = struct('int_km1', 0, 'y_km1', 0);
+yv   = [1.5; -0.4];
+for k = 1:20
+    [Ym, rs_m] = mfc_riachy_transform(yv, Kd_m, Ts, rs_m);
+    [Y1, rs_1] = mfc_riachy_transform(yv(1), Kd_m(1,1), Ts, rs_1);
+    [Y2, rs_2] = mfc_riachy_transform(yv(2), Kd_m(2,2), Ts, rs_2);
+end
+check(sprintf('mimo transform: Y = y + Kd*int y (max|dY| = %.3g)', ...
+      max(abs(Ym - (yv + Kd_m*rs_m.int_km1)))), ...
+      max(abs(Ym - (yv + Kd_m*rs_m.int_km1))) < 1e-14);
+check('mimo transform: diagonal channel 2 matches the scalar transform', ...
+      abs(Ym(2) - Y2) < 1e-14);
+check('mimo transform: the off-diagonal Kd genuinely mixes channels', ...
+      abs(Ym(1) - Y1) > 1e-3);
+
+% 4b) the estimators are vector-safe, and two identical channels with a
+% diagonal alpha reduce to the scalar path -- the same reduction property
+% tests/test_golden_mimo.m pins for the algebraic estimator, here for the
+% Riachy chain. NOT asserted bit-exact for the sliding window: its buffers
+% grew a column dimension, so the tap sum becomes a matrix product and BLAS
+% accumulates it in a different order (~1e-13). The SCALAR path is
+% untouched -- its buffers are still n-by-1 -- which is why the golden
+% traces are unaffected.
+for kind = {false, true}
+    algebraic = kind{1};
+    Fs = run_riachy(algebraic, Ts, alpha, Kd, a, u0, t_eval);                 % scalar
+    Fv = run_riachy_mimo(algebraic, Ts, alpha*eye(2), Kd*eye(2), a, u0, t_eval);
+    if algebraic
+        lbl = 'algebraic';  tol = 0;             % pure elementwise: exact
+    else
+        lbl = 'window';     tol = 1e-11;
+    end
+    d = max(abs(Fv - [Fs; Fs]));
+    check(sprintf('mimo %s: identical channels reduce to the scalar estimate (max|dF| = %.3g)', ...
+          lbl, d), d <= tol);
+end
+
+% 4c) the composed 2x2 loop: cross-coupled alpha, matrix Kp and Kd, a P
+% feedback only (D = 0), ff = ddot_sp + Kd*dot_sp.
+Ts4  = 1e-3;
+A0   = [4 0.6; -0.3 5];        % plant ddot_y = -A1*dot_y - A0*y + B*u
+A1   = [0.5 0.1; 0.0 0.7];
+B    = [1.2 0.4; -0.25 1.0];
+alpha4 = B;                    % alpha is a DESIGN choice; here, the true B
+p4   = 8;  Kp4 = p4^2*eye(2);  Kd4 = 2*p4*eye(2);
+t4   = (0:Ts4:3)';
+ref4 = [double(t4 >= 0.1), 0.5*double(t4 >= 0.1)];
+
+[y_m, u_m] = sim_riachy_mimo(t4, Ts4, A0, A1, B, alpha4, Kp4, Kd4, ref4);
+check(sprintf('mimo riachy loop: tracks both steps (final y = [%.4f %.4f])', ...
+      y_m(end,1), y_m(end,2)), max(abs(y_m(end,:) - ref4(end,:))) < 3e-2);
+check('mimo riachy loop: stays bounded', ...
+      all(isfinite(y_m(:))) && max(abs(y_m(:))) < 3);
+check('mimo riachy loop: command stays bounded', ...
+      all(isfinite(u_m(:))) && max(abs(u_m(:))) < 500);
+
+% The same wiring invariant as the SISO case, and it is the invariant most
+% likely to be got wrong once Kd is a matrix: ff must carry Kd*dot_sp.
+ramp4 = [min(1, max(0, (t4 - 0.1)/2)), 0.5*min(1, max(0, (t4 - 0.1)/2))];
+[y_ff4,  ~] = sim_riachy_mimo(t4, Ts4, A0, A1, B, alpha4, Kp4, Kd4, ramp4);
+[y_nff4, ~] = sim_riachy_mimo(t4, Ts4, A0, A1, B, alpha4, Kp4, Kd4, ramp4, false);
+e_ff4  = max(max(abs(y_ff4(end-500:end, :)  - ramp4(end-500:end, :))));
+e_nff4 = max(max(abs(y_nff4(end-500:end, :) - ramp4(end-500:end, :))));
+check(sprintf('mimo riachy loop: ff must carry Kd*dot_sp (err %.2e with, %.2e without)', ...
+      e_ff4, e_nff4), e_nff4 > 5*e_ff4);
+
 fprintf('\ntest_riachy: %d passed, %d FAILED\n', N_PASS, N_FAIL);
 if N_FAIL > 0, error('test_riachy: %d check(s) failed.', N_FAIL); end
 end
@@ -238,6 +319,73 @@ for k = 1:N
     U(k) = u;
 
     ddy = -a1*dyk - a0*yk + b*u;
+    yk  = yk + Ts*dyk;
+    dyk = dyk + Ts*ddy;
+    u_prev = u;
+end
+end
+
+
+function F = run_riachy_mimo(algebraic, Ts, alpha, Kd, a, u0, t_eval)
+% run_riachy with n = 2 identical channels: same samples, same gains, the
+% vector code path. Must reproduce the scalar result exactly.
+n    = 2;
+kern = mfc_siso.window_kernel(2, 40, Ts);
+rs   = struct('int_km1', zeros(n,1), 'y_km1', zeros(n,1));
+est  = struct('z_km1', zeros(n,1), 'z_km2', zeros(n,1), ...
+              'num_filt_km1', zeros(n,1), 'num_filt_km2', zeros(n,1), ...
+              'den_filt_km1', 0, 'den_filt_km2', 0, ...
+              'y_buf', zeros(kern.n_intervals+1, n), ...
+              'u_buf', zeros(kern.n_intervals+1, n));
+F = zeros(n,1);
+for k = 1:round(t_eval/Ts) + 1
+    t = (k-1)*Ts;
+    [Y, rs] = mfc_riachy_transform(0.5*a*t^2*ones(n,1), Kd, Ts, rs);
+    if algebraic
+        [F, est] = mfc_fhat_algebraic_second_order(Y, u0*ones(n,1), alpha, t, Ts, 10, 0.1, 0, 0, est);
+    else
+        [F, est] = mfc_fhat_sliding_window(Y, u0*ones(n,1), alpha, t, kern, est);
+    end
+end
+end
+
+function [y, U] = sim_riachy_mimo(t, Ts, A0, A1, B, alpha, Kp, Kd, ref, use_kd_ff)
+% Composed NxN Riachy loop (sliding-window estimator) on the cross-coupled
+% plant ddot_y = -A1*dot_y - A0*y + B*u. Wiring exactly as the block help
+% states it: F_hat from the Riachy estimator, fb = Kp*err with NO
+% derivative, ff = ddot_sp + Kd*dot_sp, u = alpha\(-F_hat + ff - fb).
+if nargin < 10, use_kd_ff = true; end
+n    = size(A0, 1);
+kern = mfc_siso.window_kernel(2, 40, Ts);
+rs   = struct('int_km1', zeros(n,1), 'y_km1', zeros(n,1));
+est  = struct('z_km1', zeros(n,1), 'z_km2', zeros(n,1), ...
+              'num_filt_km1', zeros(n,1), 'num_filt_km2', zeros(n,1), ...
+              'den_filt_km1', 0, 'den_filt_km2', 0, ...
+              'y_buf', zeros(kern.n_intervals+1, n), ...
+              'u_buf', zeros(kern.n_intervals+1, n));
+W_REF = 100;
+sp1 = zeros(n,1);  sp2 = zeros(n,1);  u_prev = zeros(n,1);
+yk = zeros(n,1);   dyk = zeros(n,1);
+N = numel(t);  y = zeros(N, n);  U = zeros(N, n);
+for k = 1:N
+    y(k, :) = yk.';
+    [sp_filt, dot_sp, ddot_sp] = mfc_siso.ref_traj(ref(k, :).', sp1, sp2, Ts, W_REF, true);
+    sp2 = sp1;  sp1 = sp_filt;
+
+    [Y, rs]  = mfc_riachy_transform(yk, Kd, Ts, rs);
+    [F, est] = mfc_fhat_sliding_window(Y, u_prev, alpha, t(k), kern, est);
+
+    err = yk - sp_filt;
+    fb  = Kp*err;                          % P only -- no derivative anywhere
+    if use_kd_ff
+        ff = ddot_sp + Kd*dot_sp;
+    else
+        ff = ddot_sp;
+    end
+    u       = mfc_siso.command_mimo(F, ff, fb, alpha);
+    U(k, :) = u.';
+
+    ddy = -A1*dyk - A0*yk + B*u;           % ZOH on u, forward Euler
     yk  = yk + Ts*dyk;
     dyk = dyk + Ts*ddy;
     u_prev = u;

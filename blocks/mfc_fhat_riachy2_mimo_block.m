@@ -1,89 +1,73 @@
-classdef mfc_fhat_riachy2_block < matlab.System
-    % mfc_fhat_riachy2_block  F estimator, 2nd order, RIACHY'S TRICK.
+classdef mfc_fhat_riachy2_mimo_block < matlab.System
+    % mfc_fhat_riachy2_mimo_block  F estimator, 2nd order, RIACHY'S TRICK,
+    % with MATRIX gains.
     %
-    %   Estimates
+    %   The vector-valued twin of mfc_fhat_riachy2_block: estimates
     %
     %       Fk = F + Kd*dot_y
     %
     %   in the second-order ultra-local model rewritten on the auxiliary
-    %   output Y (Riachy et al.):
+    %   output Y (Riachy et al.), with y, u, F and Fk n-by-1 and both Kd and
+    %   alpha square n-by-n:
     %
     %       Y = y + Kd*int y      =>      ddot_Y = Fk + alpha*u
     %
-    %   The block integrates the measurement, forms Y, and runs a standard
-    %   second-order F estimator on it. Because Fk already carries Kd*dot_y,
-    %   the loop it closes is an iPD (or iPID with Ki) that never estimates
-    %   a derivative of the measurement -- that is the whole point of the
-    %   trick. See mfc_riachy_transform for the derivation.
+    %   The rewrite is the SISO one with matrix products: adding Kd*dot_y to
+    %   both sides of ddot_y = F + alpha*u is a linear operation, so it goes
+    %   through unchanged for a matrix Kd. Kd need not be diagonal -- a full
+    %   Kd folds cross-channel derivative feedback into Y, and the closed
+    %   loop is the matrix polynomial ddot_e + Kd*dot_e + Kp*e = 0.
     %
-    %   DECOUPLED. Fk is a property of the plant, not of the loop: nothing
-    %   about the setpoint or the error enters here. The remaining feedback
-    %   is explicit and it is a PI, NOT a PID:
+    %   DECOUPLED, in the same sense as the SISO block: Fk is a property of
+    %   the plant, nothing about the setpoint or the error enters here. The
+    %   remaining feedback is explicit and it is a PI, NOT a PID:
     %
-    %       fb <- stock Discrete PID with P = Kp, I = Ki, D = 0, driven by
-    %             err = y - sp_filt
-    %       ff <- ddot_sp + Kd*dot_sp    (a stock Gain and Sum on the
-    %             smoother's derivative outputs)
+    %       fb <- Kp*err + Ki*int err, D = 0, on err = y - sp_filt
+    %       ff <- ddot_sp + Kd*dot_sp
     %
-    %   so that mfc_command_block computes
+    %   so that mfc_command_mimo_block computes
     %
-    %       u = ( -Fk + ddot_sp + Kd*dot_sp - Kp*err - Ki*int err ) / alpha
+    %       u = alpha \ ( -Fk + ddot_sp + Kd*dot_sp - Kp*err - Ki*int err )
     %
-    %   and the closed loop is ddot_err + Kd*dot_err + Kp*err = 0. The two
-    %   ways to get Kd wrong are worth stating: putting D on the PID applies
-    %   Kd twice, and dropping Kd*dot_sp from ff leaves the reference
-    %   feedforward inconsistent with Y and costs tracking on a moving
-    %   setpoint (it is exact for a settled step).
+    %   Putting D on the feedback applies Kd twice; dropping Kd*dot_sp from
+    %   ff leaves the feedforward inconsistent with Y and costs tracking on a
+    %   moving setpoint. Both mistakes are silent.
     %
-    %   ESTIMATOR TYPE IS A PARAMETER HERE, unlike coupled/decoupled and
-    %   model order, which are separate blocks. Both choices estimate the
-    %   same Fk from the same Y with the same ports and the same wiring --
-    %   only the numerics differ, so it is a tuning knob, not a structure:
-    %
-    %     Algebraic (growing window)  operational-calculus recursion; the
-    %         window grows from t = 0, so t must be a clock that starts with
-    %         the run, and est_hold_time guards the near-zero denominator.
-    %         Smooths its own numerator and denominator.
-    %     Sliding window (FIR)        fixed-length weighted sum over the
-    %         last Tw = window_samples*Ts seconds, held at zero until the
-    %         window fills. Insensitive to the time origin,
-    %         and with no internal smoothing at all -- follow it with an
-    %         mfc_smoother_block if Fk is noisy.
-    %
-    %   The growing-window caveat bites harder here than on a plain
-    %   estimator: int y is unbounded, so with a non-zero steady state Y
-    %   ramps forever and the algebraic estimator weights that ramp by t^2.
-    %   The sliding window has finite memory and does not care. See
-    %   Knowledge/riachy-trick.md.
+    %   ESTIMATOR TYPE IS A PARAMETER, as in the SISO block: algebraic
+    %   (growing window, needs a run-start clock, weights the unbounded
+    %   int y by t^2) or sliding window (FIR, fixed memory, no internal
+    %   smoothing). Both act channel-wise on Y through ONE shared window --
+    %   the algebraic denominator t^2 is scalar, and the sliding window's
+    %   taps are scalar quadrature weights. Prefer the sliding window here,
+    %   for the reason in Knowledge/riachy-trick.md.
     %
     %   Ports
-    %     In : y       plant measurement
+    %     In : y       plant measurement                       (n-by-1)
     %          u_prev  command that actually reached the plant over the LAST
-    %                  sample; through an explicit unit delay
-    %          t       clock, starting with the run
-    %          alpha   optional live gain (overrides the mask parameter)
-    %     Out: F_hat   the estimate of Fk = F + Kd*dot_y
+    %                  sample, through an explicit unit delay  (n-by-1)
+    %          t       clock, starting with the run            (scalar)
+    %          alpha   optional live gain                      (n-by-n)
+    %     Out: F_hat   the estimate of Fk = F + Kd*dot_y        (n-by-1)
     %          Y       optional, the auxiliary output (logging / debug)
     %
-    %   The math is mfc_riachy_transform followed by
+    %   The math is mfc_riachy_transform (matrix Kd) followed by
     %   mfc_fhat_algebraic_second_order (a_fold = b_fold = 0) or
     %   mfc_fhat_sliding_window; this class only maps parameters and
     %   Simulink state onto them.
     %
-    %   The vector-valued twin, with square n-by-n Kd and alpha, is
-    %   mfc_fhat_riachy2_mimo_block.
-    %
-    %   See also mfc_fhat_riachy2_mimo_block, mfc_riachy_transform, mfc_fhat_alg2_decoupled_block,
-    %   mfc_fhat_window_block, mfc_command_block, mfc_smoother_block.
+    %   See also mfc_fhat_riachy2_block, mfc_riachy_transform,
+    %   mfc_fhat_alg2_decoupled_mimo_block, mfc_command_mimo_block.
 
     properties
-        % alpha Ultra-local model input gain (ignored if the live alpha input is enabled)
-        alpha = 1
-        % Kd Derivative gain folded into Y (the Kd of s^2 + Kd*s + Kp); keep D = 0 on the external PID
-        Kd = 10
+        % alpha Ultra-local model input gain, square n-by-n (ignored if the live alpha input is enabled)
+        alpha = eye(2)
+        % Kd Derivative gain folded into Y, square n-by-n (the Kd of ddot_e + Kd*dot_e + Kp*e); keep D = 0 on the external feedback
+        Kd = 10*eye(2)
     end
 
     properties (Nontunable)
+        % n Number of channels (alpha and Kd are n-by-n, signals are n-by-1)
+        n = 2
         % estimator F estimator applied to the auxiliary output Y
         estimator = 'Algebraic (growing window)'
         % Ts Sample time [s] (fixes the block's discrete rate)
@@ -120,7 +104,7 @@ classdef mfc_fhat_riachy2_block < matlab.System
         num_filt_km2
         den_filt_km1
         den_filt_km2
-        % sliding-window estimator (1x1 placeholders when algebraic)
+        % sliding-window estimator (1-row placeholders when algebraic)
         y_buf
         u_buf
     end
@@ -130,7 +114,7 @@ classdef mfc_fhat_riachy2_block < matlab.System
     end
 
     methods
-        function obj = mfc_fhat_riachy2_block(varargin)
+        function obj = mfc_fhat_riachy2_mimo_block(varargin)
             setProperties(obj, nargin, varargin{:});
         end
     end
@@ -141,7 +125,7 @@ classdef mfc_fhat_riachy2_block < matlab.System
         end
 
         function n_buf = bufferLength(obj)
-            % 1x1 placeholder when algebraic: the (dead) sliding-window
+            % 1-row placeholder when algebraic: the (dead) sliding-window
             % branch is still compiled under code generation, so the
             % buffers must exist and be typed either way. Built only from
             % Nontunable properties, so it is a compile-time constant.
@@ -168,7 +152,7 @@ classdef mfc_fhat_riachy2_block < matlab.System
                 alpha_k = obj.alpha;
             end
 
-            % 1. Riachy's auxiliary output: Y = y + Kd*int y
+            % 1. Riachy's auxiliary output: Y = y + Kd*int y (matrix Kd)
             rc = struct('int_km1', obj.int_km1, 'y_km1', obj.y_km1);
             [Y, rc] = mfc_riachy_transform(y, obj.Kd, obj.Ts, rc);
             obj.int_km1 = rc.int_km1;
@@ -212,19 +196,30 @@ classdef mfc_fhat_riachy2_block < matlab.System
         end
 
         function resetImpl(obj)
-            obj.int_km1      = 0;
-            obj.y_km1        = 0;
-            obj.z_km1        = 0;
-            obj.z_km2        = 0;
-            obj.num_filt_km1 = 0;
-            obj.num_filt_km2 = 0;
-            obj.den_filt_km1 = 0;
+            obj.int_km1      = zeros(obj.n, 1);
+            obj.y_km1        = zeros(obj.n, 1);
+            obj.z_km1        = zeros(obj.n, 1);
+            obj.z_km2        = zeros(obj.n, 1);
+            obj.num_filt_km1 = zeros(obj.n, 1);
+            obj.num_filt_km2 = zeros(obj.n, 1);
+            obj.den_filt_km1 = 0;   % denominator is t^2: scalar, shared
             obj.den_filt_km2 = 0;
-            % Full-size zeros() with a codegen-constant length: code
+            % One COLUMN per channel, with a codegen-constant length: code
             % generation types the discrete states from these assignments.
             n_buf     = bufferLength(obj);
-            obj.y_buf = zeros(n_buf, 1);
-            obj.u_buf = zeros(n_buf, 1);
+            obj.y_buf = zeros(n_buf, obj.n);
+            obj.u_buf = zeros(n_buf, obj.n);
+        end
+
+        function validatePropertiesImpl(obj)
+            if ~obj.use_live_alpha && ~isequal(size(obj.alpha), [obj.n obj.n])
+                error('mfc:mimo:alphaSize', ...
+                    'alpha must be %d-by-%d to match n.', obj.n, obj.n);
+            end
+            if ~isequal(size(obj.Kd), [obj.n obj.n])
+                error('mfc:mimo:KdSize', ...
+                    'Kd must be %d-by-%d to match n.', obj.n, obj.n);
+            end
         end
 
         % ---- save/load of the locked object ----------------------------
@@ -253,9 +248,11 @@ classdef mfc_fhat_riachy2_block < matlab.System
         function [sz, dt, cp] = getDiscreteStateSpecificationImpl(obj, name)
             switch name
                 case {'y_buf', 'u_buf'}
-                    sz = [bufferLength(obj), 1];
-                otherwise
+                    sz = [bufferLength(obj), obj.n];
+                case {'den_filt_km1', 'den_filt_km2'}
                     sz = [1 1];
+                otherwise
+                    sz = [obj.n 1];
             end
             dt = 'double';  cp = false;
         end
@@ -282,7 +279,7 @@ classdef mfc_fhat_riachy2_block < matlab.System
             varargout = names;
         end
         function varargout = getOutputSizeImpl(obj)
-            [varargout{1:getNumOutputsImpl(obj)}] = deal([1 1]);
+            [varargout{1:getNumOutputsImpl(obj)}] = deal([obj.n 1]);
         end
         function varargout = getOutputDataTypeImpl(obj)
             [varargout{1:getNumOutputsImpl(obj)}] = deal('double');
@@ -300,26 +297,27 @@ classdef mfc_fhat_riachy2_block < matlab.System
             else
                 kind = sprintf('window, Tw = %g s', obj.window_samples*obj.Ts);
             end
-            icon = sprintf('F-hat Riachy 2nd\nY = y + %g*int y\n%s', obj.Kd, kind);
+            icon = sprintf('F-hat Riachy 2nd\nY = y + Kd*int y\nmatrix Kd, alpha (%dx%d)\n%s', ...
+                obj.n, obj.n, kind);
         end
     end
 
     methods (Static, Access = protected)
         function header = getHeaderImpl
-            header = matlab.system.display.Header('mfc_fhat_riachy2_block', ...
-                'Title', 'MFC F-hat: Riachy trick, 2nd order', ...
+            header = matlab.system.display.Header('mfc_fhat_riachy2_mimo_block', ...
+                'Title', 'MFC F-hat: Riachy trick, 2nd order, matrix gains', ...
                 'Text', sprintf(['Estimates Fk = F + Kd*dot_y from the auxiliary ', ...
-                    'output Y = y + Kd*int y, for which ddot_Y = Fk + alpha*u.\n\n', ...
+                    'output Y = y + Kd*int y, for which ddot_Y = Fk + alpha*u, with ', ...
+                    'n-by-1 signals and square n-by-n Kd and alpha.\n\n', ...
                     'The derivative term comes back inside F_hat, so the loop needs no ', ...
-                    'derivative estimate at all. Wire the remaining feedback as a stock ', ...
-                    'Discrete PID with P = Kp, I = Ki and D = 0 on err = y - sp_filt, ', ...
-                    'and feed the command block ff = ddot_sp + Kd*dot_sp. Putting D on ', ...
-                    'that PID applies Kd twice.\n\n', ...
-                    'The estimator applied to Y is a parameter, not a separate block: ', ...
-                    'algebraic (growing window, needs a run-start clock) or sliding ', ...
-                    'window (FIR, fixed memory, no internal smoothing). int y is ', ...
-                    'unbounded -- with a non-zero steady state the sliding window is ', ...
-                    'the better-behaved choice.']));
+                    'derivative estimate at all. Wire the remaining feedback with P = Kp, ', ...
+                    'I = Ki and D = 0 on err = y - sp_filt, and feed ', ...
+                    'mfc_command_mimo_block ff = ddot_sp + Kd*dot_sp. Putting D on that ', ...
+                    'feedback applies Kd twice.\n\nThe estimator applied to Y is a ', ...
+                    'parameter, not a separate block: algebraic (growing window, needs a ', ...
+                    'run-start clock) or sliding window (FIR, fixed memory, no internal ', ...
+                    'smoothing). int y is unbounded -- with a non-zero steady state the ', ...
+                    'sliding window is the better-behaved choice.']));
         end
     end
 end

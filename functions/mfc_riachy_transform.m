@@ -43,10 +43,15 @@ function [Y, state] = mfc_riachy_transform(y, Kd, Ts, state)
 %   estimator (finite memory), but the algebraic estimator's growing t^2
 %   weights see an ever-larger signal -- see Knowledge/riachy-trick.md.
 %
+%   VECTOR-SAFE. y may be n-by-1 with a square n-by-n Kd (the MIMO
+%   ultra-local model): Y = y + Kd*int y is a matrix product, and the
+%   derivation is unchanged because adding Kd*dot_y to both sides is
+%   linear. See MFC_FHAT_RIACHY2_MIMO_BLOCK.
+%
 %   Inputs
-%     y     : plant measurement at step k
+%     y     : plant measurement at step k (scalar or n-by-1)
 %     Kd    : derivative gain folded into Y (the Kd of the closed-loop
-%             polynomial s^2 + Kd*s + Kp)
+%             polynomial s^2 + Kd*s + Kp; n-by-n for a vector y)
 %     Ts    : sample time [s]
 %     state : struct with fields
 %               .int_km1  integral of y through step k-1
@@ -56,7 +61,7 @@ function [Y, state] = mfc_riachy_transform(y, Kd, Ts, state)
 %     Y     : auxiliary output y + Kd*int y
 %     state : updated state struct
 %
-%   See also MFC_FHAT_RIACHY2_BLOCK, MFC_FHAT_ALGEBRAIC_SECOND_ORDER,
+%   See also MFC_FHAT_RIACHY2_BLOCK, MFC_FHAT_RIACHY2_MIMO_BLOCK, MFC_FHAT_ALGEBRAIC_SECOND_ORDER,
 %   MFC_FHAT_SLIDING_WINDOW.
 
 int_y = state.int_km1 + 0.5*Ts*(y + state.y_km1);

@@ -102,6 +102,34 @@ because $\mathfrak F$ contains $K_D \dot y$ and therefore **moves fast**:
 
 Prefer the sliding window for this trick unless you have a reason not to.
 
+## NxN
+
+The rewrite is linear, so it survives being made vector-valued verbatim. With
+$y, u, F \in \mathbb R^n$ and **square** $K_D, \alpha \in \mathbb R^{n\times n}$:
+
+$$
+Y = y + K_D \int_c^t y \qquad\Longrightarrow\qquad \ddot Y = \mathfrak F + \alpha u,
+\qquad \mathfrak F = F + K_D \dot y
+$$
+
+and the command law becomes the linear solve of [[block-library-signal-flow]]'s
+matrix pair, $u = \alpha^{-1}(-\mathfrak F_{\text{est}} + \ddot y^* + K_D \dot y^*
+- K_P e - K_I\!\int e)$, closing $\ddot e + K_D \dot e + K_P e = 0$ as a matrix
+polynomial. $K_D$ need not be diagonal: a full $K_D$ folds *cross-channel*
+derivative feedback into $Y$, which is the one thing this port buys over running
+$n$ SISO blocks side by side.
+
+Both estimators act channel-wise through **one shared window** — the algebraic
+denominator $t^2$ is scalar, and the sliding window's taps are scalar quadrature
+weights. That is the same asymmetry (per-channel numerator, shared denominator)
+that `tests/test_golden_mimo.m` pins for the plain algebraic estimator.
+
+Block `mfc_fhat_riachy2_mimo_block`, feeding `mfc_command_mimo_block`; tests
+`tests/test_riachy.m` §4 (numerics, and a 2×2 loop on a cross-coupled plant)
+and `tests/test_estimators.m` §8 (ports, masks, reduction to the SISO block).
+`mfc_fhat_sliding_window` grew a column per channel in its buffers to make this
+work; the scalar path is byte-for-byte unchanged.
+
 ## The noise result, which is arguably the bigger win
 
 Removing $K_D \dot e$ removes the loop's dominant noise path. In a
