@@ -81,13 +81,18 @@ end
 And the sliding-window estimator shifts them with `circshift`, not slicing:
 
 ```matlab
-state.y_buf      = circshift(state.y_buf, -1);
-state.y_buf(end) = y;
+state.y_buf         = circshift(state.y_buf, -1);
+state.y_buf(end, :) = y.';
 ```
 
 `[buf(2:end); new]` gives an identical result for a real buffer but is invalid
 for a $1\times1$ one — and that dead $1\times1$ code path is still compiled for
 algebraic variants. `circshift` is valid for both.
+
+The buffers are $(n_{\text{int}}+1)\times m$, **one column per channel** ($m=1$
+in the scalar case), which is why the newest sample is written with `(end, :)`
+and a transpose. That indexing is valid at every width, including the $1\times1$
+placeholder.
 
 ## 5. `resetImpl` types the discrete states, so buffer length must be constant
 
@@ -116,6 +121,23 @@ end
 ```
 
 `mfc_fhat_window_block` follows the same pattern.
+
+### The n-channel blocks add a second constant dimension
+
+`mfc_mimo_core` and the `*_mimo_block` classes size their states from `obj.n`
+as well as from the buffer length — `zeros(n_buf, obj.n)`, `zeros(obj.n, 1)` —
+so `n` is `Nontunable` for exactly the same reason `est_filter_window` is. The
+denominator history (`den_filt_km1/2`) stays $1\times1$ at every `n`: the
+estimators share one integration window across the channels, so
+`getDiscreteStateSpecificationImpl` has to special-case it.
+
+### Width is a run-time branch, not two implementations
+
+`mfc_siso.step` picks `mfc_siso.command_mimo` (a linear solve) over
+`mfc_siso.command` (a division) on `cfg.n > 1`, and the anti-windup freeze the
+same way. `cfg.n` is a run-time struct field, so **both branches are compiled**
+— the same situation as the estimator dispatch, and the reason the dead branch
+still has to be valid code at either width.
 
 ## 6. `est_filter_window` is Nontunable
 

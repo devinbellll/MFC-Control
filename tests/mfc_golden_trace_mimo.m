@@ -30,10 +30,18 @@ function [traces, names, t] = mfc_golden_trace_mimo()
 %   and never touches matlab.System, mirroring MFC_GOLDEN_TRACE and
 %   tests/test_composed.m generalized to n-by-1 vector signals.
 %
+%   Three more variants cover the rest of the n-channel estimator grid --
+%   1st-order decoupled algebraic, 2nd-order decoupled sliding window and
+%   2nd-order COUPLED algebraic with matrix Kp/Kd folded in. They are driven
+%   through mfc_siso.config/step with n = 2, which is precisely what
+%   mfc_mimo_core runs, so they pin the width-generic pipeline (the matrix
+%   command solve and the per-channel integrator freeze) as well as the
+%   estimator kernels.
+%
 %   Outputs
-%     traces : {1 x 2} cell, each [N x (5n+1)] =
+%     traces : {1 x 5} cell, each [N x (5n+1)] =
 %              [u(1:n), F_hat(1:n), sp_filt(1:n), err(1:n), u_raw(1:n), valid]
-%     names  : {1 x 2} cell of variant labels (also the csv basenames)
+%     names  : {1 x 5} cell of variant labels (also the csv basenames)
 %     t      : [N x 1] time vector [s]
 %
 %   See also GOLDEN_CAPTURE_MIMO, TEST_GOLDEN_MIMO, MFC_GOLDEN_TRACE,
@@ -71,8 +79,70 @@ alpha_cross     = [1.00 0.35; -0.20 1.20];
 T2 = run_mimo_variant(n, alpha_cross, plant_cross, Ts, Kp2, Kd2, Ki, ...
                        WFilter, FFilter, hold_time, t, ref);
 
-traces = {T1, T2};
-names  = {'mimo_diag', 'mimo_cross'};
+% --- Variants 3-5: the rest of the n-channel estimator grid ---------------
+% Driven through mfc_siso.config/step with n = 2 rather than hand-wired, so
+% these also pin the width-generic pipeline (the matrix command solve and
+% the per-channel integrator freeze) that mfc_mimo_core is a thin wrapper
+% over. The plant here has a genuinely MATRIX input gain B and alpha = B,
+% with identical per-channel dynamics: cross-coupling that the estimator
+% and the command must both undo, without the per-channel tuning mismatch
+% that makes the coupled variant diverge (it does -- see below).
+B_cross    = [1.00 0.35; -0.20 1.20];
+plant_matB = struct('g', [9.81; 9.81], 'd', [0.2; 0.2], ...
+                     'B', B_cross, 'tau', [0.05; 0.05]);
+Kp1 = p;  Kd1 = p;                 % 1st order: single pole at -Kp
+
+T3 = run_mimo_cfg(n, B_cross, plant_matB, Ts, t, ref, ...
+        1, 'decoupled', 'algebraic',      Kp1, Kd1, Ki, WFilter, FFilter, hold_time);
+T4 = run_mimo_cfg(n, B_cross, plant_matB, Ts, t, ref, ...
+        2, 'decoupled', 'sliding_window', Kp2, Kd2, Ki, WFilter, 40, hold_time);
+T5 = run_mimo_cfg(n, B_cross, plant_matB, Ts, t, ref, ...
+        2, 'coupled',   'algebraic',      Kp2, Kd2, Ki, WFilter, FFilter, hold_time);
+
+traces = {T1, T2, T3, T4, T5};
+names  = {'mimo_diag', 'mimo_cross', ...
+          'mimo_1st_decoupled_alg', 'mimo_2nd_decoupled_win', 'mimo_2nd_coupled_alg'};
+end
+
+
+function T = run_mimo_cfg(n, alpha, plant, Ts, t, ref, order, structure, ...
+                           estimator, Kp, Kd, Ki, WFilter, FFilter, hold_time)
+%RUN_MIMO_CFG An n-channel loop driven through the mfc_siso pipeline itself.
+%
+%   mfc_siso.config('n', n, ...) + mfc_siso.step, i.e. exactly what
+%   mfc_mimo_core executes, on a plant whose input gain is a MATRIX
+%   (plant.B) rather than the per-channel vector RUN_MIMO_VARIANT uses. The
+%   coupled variant folds MATRIX gains (Kp*eye(n), Kd*eye(n) here), which is
+%   the path mfc_fhat_alg1/2_coupled_mimo_block take.
+%
+%   THE COUPLED VARIANT IS TUNING-FRAGILE and that is worth knowing before
+%   reading its trace: with the channels' own dynamics unequal (different
+%   drag or actuator lag) the same gains diverge, because the folded
+%   polynomial leaves nothing explicit outside F_hat to absorb the
+%   mismatch. The decoupled variants tolerate it. That is why this plant has
+%   identical per-channel dynamics and puts all the coupling in B.
+
+cfg = mfc_siso.config( ...
+    'n', n, 'model_order', order, 'structure', structure, 'estimator', estimator, ...
+    'Ts', Ts, 'alpha', alpha, 'Kp', Kp*eye(n), 'Kd', Kd*eye(n), 'Ki', Ki*eye(n), ...
+    'ref_filter_window', WFilter, 'est_filter_window', FFilter, ...
+    'est_hold_time', hold_time);
+state = mfc_siso.init(cfg);
+
+N = numel(t);
+T = zeros(N, 5*n + 1);
+y = zeros(n, 1);  dy = zeros(n, 1);  u_act = zeros(n, 1);
+
+for k = 1:N
+    [out, state] = mfc_siso.step(ref(k)*ones(n, 1), y, t(k), state.u_km1, alpha, cfg, state);
+    T(k, :) = [out.u.', out.F_hat.', out.sp_filt.', out.err.', out.u_raw.', ...
+               double(out.est_valid)];
+
+    u_act = u_act + (out.u - u_act) ./ plant.tau * Ts;
+    ddy   = -plant.g - plant.d .* dy + plant.B * u_act;   % MATRIX input gain
+    dy    = dy + ddy * Ts;
+    y     = y + dy * Ts;
+end
 end
 
 

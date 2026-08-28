@@ -1,8 +1,13 @@
-function golden_capture_mimo()
+function golden_capture_mimo(varargin)
 %GOLDEN_CAPTURE_MIMO Write the reference 2x2 MIMO traces to tests/golden/*.csv.
 %
 %   Run ONCE, from a known-good tree, before refactoring:
 %       octave --no-gui -q tests/golden_capture_mimo.m
+%
+%   golden_capture_mimo('name1', 'name2', ...) writes ONLY those variants.
+%   Use it when ADDING a variant, so the existing files are not silently
+%   rewritten -- rewriting a golden is how a regression gets blessed by
+%   accident.
 %
 %   Regenerating these files is an explicit decision to change the reference
 %   behaviour -- do not re-run it to make TEST_GOLDEN_MIMO pass.
@@ -20,7 +25,20 @@ if ~exist(outdir, 'dir'), mkdir(outdir); end
 
 [traces, names] = mfc_golden_trace_mimo();
 
+if isempty(varargin)
+    wanted = names;
+else
+    wanted = varargin;
+    for i = 1:numel(wanted)
+        assert(any(strcmp(names, wanted{i})), ...
+            'golden_capture_mimo: unknown variant ''%s''.', wanted{i});
+    end
+end
+
+n_written = 0;
 for c = 1:numel(traces)
+    if ~any(strcmp(wanted, names{c})), continue; end
+    n_written = n_written + 1;
     T = traces{c};
     n = (size(T, 2) - 1) / 5;
     cols = mimo_cols(n);
@@ -36,7 +54,7 @@ for c = 1:numel(traces)
     fprintf('  wrote %-16s  %d samples  max|u|=%.6g\n', ...
             [names{c} '.csv'], size(T, 1), max(max(abs(T(:, 1:n)))));
 end
-fprintf('golden_capture_mimo: %d variants written to %s\n', numel(traces), outdir);
+fprintf('golden_capture_mimo: %d variants written to %s\n', n_written, outdir);
 end
 
 

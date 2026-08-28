@@ -16,14 +16,25 @@ function test_estimators()
 %     2. rejection of the undefined coupled + sliding-window combination
 %     3. sign-flip regression on an open-loop-UNSTABLE plant that only stays
 %        bounded when F is estimated with the correct sign
-%     4. the stage blocks, wired by hand, reproducing mfc_siso_core exactly
-%     5. reset() genuinely restoring the initial state
-%     6. mfc_fhat_riachy2_block: ports, the algebraic/window selector, the
+%     4. the first-order decoupled variants on a first-order plant
+%     5. the stage blocks, wired by hand, reproducing mfc_siso_core exactly
+%     6. reset() genuinely restoring the initial state
+%     7. mfc_fhat_riachy2_block: ports, the algebraic/window selector, the
 %        optional Y output, and it being a thin wrapper over
 %        mfc_riachy_transform + the selected estimator
-%     7. mfc_fhat_riachy2_mimo_block: the same wrapper claim with matrix Kd
+%     8. mfc_fhat_riachy2_mimo_block: the same wrapper claim with matrix Kd
 %        and matrix alpha, plus port widths, the mask size checks, and the
 %        reduction to the SISO block when both matrices are diagonal
+%     9. the rest of the n-channel estimator surface -- the 1st-order
+%        decoupled, the two coupled and the sliding-window MIMO blocks --
+%        each against the kernel it claims to wrap, plus the n-channel
+%        smoother
+%    10. mfc_mimo_core: n = 1 reproducing mfc_siso_core bit for bit across
+%        the decoupled grid, and n = 2 reproducing a hand-composed loop
+%    11. mfc_fhat_decoupled_dev_block: every one of its eight settings
+%        reproducing the specific block it stands in for, exactly
+%
+%   (the numbering matches the section comments in the body)
 %
 %   See also MFC_SISO_CORE, OCTAVE_SANITY, TEST_GOLDEN, TEST_COMPOSED.
 
@@ -367,6 +378,248 @@ function test_estimators()
     end
     check('riachy mimo: a wrong-size alpha is rejected', bad_alpha);
     check('riachy mimo: a wrong-size Kd is rejected',    bad_Kd);
+
+    % ---------------------------------------------------------------------
+    % 9) The rest of the n-channel estimator surface. Each block is claimed
+    %    to be a thin wrapper over one kernel call; that claim is what is
+    %    tested here, together with the port widths and the first input
+    %    port NAME -- which is the library's way of telling coupled from
+    %    decoupled, so it is load-bearing, not cosmetic.
+    % ---------------------------------------------------------------------
+    n_m     = 2;
+    alpha_v = [2 0.3; -0.1 1.5];
+    Kp_v    = [25 3; -2 30];
+    Kd_v    = [10 1; 0 12];
+    yv = @(tk) [0.3*sin(5*tk) + 0.2; -0.15*sin(3*tk)];
+    uv = @(tk) [cos(2*tk); 0.5*cos(7*tk)];
+
+    % {block, first port name, reference kernel call}
+    MB = { ...
+      mfc_fhat_alg1_decoupled_mimo_block('n', n_m, 'Ts', Ts, 'alpha', alpha_v, ...
+          'est_filter_window', 10, 'est_hold_time', 0.1), 'y', ...
+      @(z, u, tk, st) mfc_fhat_algebraic_first_order(z, u, alpha_v, tk, Ts, 10, 0.1, 0, st); ...
+      mfc_fhat_alg1_coupled_mimo_block('n', n_m, 'Ts', Ts, 'alpha', alpha_v, ...
+          'Kp', Kp_v, 'est_filter_window', 10, 'est_hold_time', 0.1), 'err', ...
+      @(z, u, tk, st) mfc_fhat_algebraic_first_order(z, u, alpha_v, tk, Ts, 10, 0.1, -Kp_v, st); ...
+      mfc_fhat_alg2_coupled_mimo_block('n', n_m, 'Ts', Ts, 'alpha', alpha_v, ...
+          'Kp', Kp_v, 'Kd', Kd_v, 'est_filter_window', 10, 'est_hold_time', 0.1), 'err', ...
+      @(z, u, tk, st) mfc_fhat_algebraic_second_order(z, u, alpha_v, tk, Ts, 10, 0.1, -Kd_v, -Kp_v, st)};
+
+    for b = 1:size(MB, 1)
+        blk  = MB{b, 1};
+        cls  = class(blk);
+        est  = struct('z_km1', zeros(n_m,1), 'z_km2', zeros(n_m,1), ...
+                      'num_filt_km1', zeros(n_m,1), 'num_filt_km2', zeros(n_m,1), ...
+                      'den_filt_km1', 0, 'den_filt_km2', 0);
+        worst = 0;  Fb = zeros(n_m, 150);
+        for k = 1:150
+            tk = (k-1)*Ts;
+            Fb(:, k) = step(blk, yv(tk), uv(tk), tk);
+            [Fr, est] = MB{b, 3}(yv(tk), uv(tk), tk, est);
+            worst = max(worst, max(abs(Fb(:, k) - Fr)));
+        end
+        in_names = cellstr(blk.getInputNames());
+        check(sprintf('%s: first input port is ''%s''', cls, MB{b, 2}), ...
+              strcmp(in_names{1}, MB{b, 2}));
+        check(sprintf('%s: F_hat is n-by-1', cls), isequal(size(Fb(:, end)), [n_m 1]));
+        check(sprintf('%s: equals its kernel (max|dF|=%.3g)', cls, worst), worst < 1e-12);
+        check(sprintf('%s: F_hat is not identically zero', cls), any(Fb(:) ~= 0));
+
+        reset(blk);
+        again = zeros(n_m, 150);
+        for k = 1:150
+            tk = (k-1)*Ts;
+            again(:, k) = step(blk, yv(tk), uv(tk), tk);
+        end
+        check(sprintf('%s: reset() restores the initial state', cls), isequal(Fb, again));
+    end
+
+    % The sliding-window MIMO block, both orders, against its own kernel.
+    for ord = {'First order (dot_y = F + alpha*u)', 'Second order (ddot_y = F + alpha*u)'}
+        wb = mfc_fhat_window_mimo_block('n', n_m, 'Ts', Ts, 'alpha', alpha_v, ...
+                 'model_order', ord{1}, 'window_samples', 20);
+        if strncmp(ord{1}, 'First', 5), o = 1; else, o = 2; end
+        kern = mfc_siso.window_kernel(o, 20, Ts);
+        est  = struct('y_buf', zeros(21, n_m), 'u_buf', zeros(21, n_m));
+        worst = 0;  Fb = zeros(n_m, 150);
+        for k = 1:150
+            tk = (k-1)*Ts;
+            Fb(:, k) = step(wb, yv(tk), uv(tk), tk);
+            [Fr, est] = mfc_fhat_sliding_window(yv(tk), uv(tk), alpha_v, tk, kern, est);
+            worst = max(worst, max(abs(Fb(:, k) - Fr)));
+        end
+        check(sprintf('window mimo (%d): equals mfc_fhat_sliding_window (max|dF|=%.3g)', o, worst), ...
+              worst < 1e-12);
+        check(sprintf('window mimo (%d): held at zeros(n,1) while the window fills', o), ...
+              isequal(Fb(:, 1:20), zeros(n_m, 20)));
+    end
+
+    % The n-channel smoother: channel-wise, and equal to mfc_siso.ref_traj.
+    sm = mfc_smoother_mimo_block('n', n_m, 'Ts', Ts, 'window', 10, 'output_derivatives', true);
+    x1 = 0;  x2 = 0;  worst = 0;
+    for k = 1:100
+        tk = (k-1)*Ts;
+        xk = yv(tk);
+        [xf, dxf, ddxf] = step(sm, xk);
+        [xr, dxr, ddxr] = mfc_siso.ref_traj(xk, x1, x2, Ts, 10, true);
+        x2 = x1;  x1 = xr;
+        worst = max([worst, max(abs(xf - xr)), max(abs(dxf - dxr)), max(abs(ddxf - ddxr))]);
+    end
+    check(sprintf('smoother mimo: equals mfc_siso.ref_traj (max|d|=%.3g)', worst), worst < 1e-12);
+    check('smoother mimo: outputs are n-by-1', isequal(size(xf), [n_m 1]));
+
+    % ---------------------------------------------------------------------
+    % 10) mfc_mimo_core. Two claims, both in its help:
+    %     (a) n = 1 takes the scalar code path, so it must reproduce
+    %         mfc_siso_core BIT FOR BIT -- not to a tolerance;
+    %     (b) at n = 2 it is the assembled form of the same stages the
+    %         individual blocks call, so a hand-composed loop must match it.
+    % ---------------------------------------------------------------------
+    for ord = {'First order (dot_y = F + alpha*u)', 'Second order (ddot_y = F + alpha*u)'}
+        for esti = {'Algebraic (growing window)', 'Sliding window (FIR taps)'}
+            args = {'model_order', ord{1}, 'estimator_type', esti{1}, ...
+                    'controller_structure', 'Decoupled (measurement-driven estimator, explicit iP/iPD)', ...
+                    'Ts', Ts, 'Kp', 25, 'Kd', 10, 'Ki', 0.5, ...
+                    'est_filter_window', 10, 'est_hold_time', 0.1};
+            c1 = mfc_siso_core(args{:}, 'alpha', 1);
+            cm = mfc_mimo_core(args{:}, 'n', 1, 'alpha', 1);
+            same = true;
+            for k = 1:200
+                tk = (k-1)*Ts;
+                [u1, F1] = step(c1, 1, 0.3*sin(5*tk), tk);
+                [um, Fm] = step(cm, 1, 0.3*sin(5*tk), tk);
+                same = same && isequal(u1, um) && isequal(F1, Fm);
+            end
+            check(sprintf('mimo core (n=1, %s / %s): identical to mfc_siso_core', ...
+                  ord{1}(1:5), esti{1}(1:5)), same);
+        end
+    end
+
+    % (b) n = 2, decoupled 2nd order algebraic, composed by hand out of the
+    % smoother, the estimator block, mfc_siso.feedback (standing in for the
+    % stock PID, so the comparison stays bit-exact) and the command block.
+    core = mfc_mimo_core('n', n_m, 'Ts', Ts, 'alpha', alpha_v, ...
+               'model_order', 'Second order (ddot_y = F + alpha*u)', ...
+               'controller_structure', 'Decoupled (measurement-driven estimator, explicit iP/iPD)', ...
+               'estimator_type', 'Algebraic (growing window)', ...
+               'Kp', 25, 'Kd', 10, 'Ki', 0, 'ref_filter_window', 10, ...
+               'est_filter_window', 10, 'est_hold_time', 0.1);
+    smo = mfc_smoother_mimo_block('n', n_m, 'Ts', Ts, 'window', 10, 'output_derivatives', true);
+    fes = mfc_fhat_alg2_decoupled_mimo_block('n', n_m, 'Ts', Ts, 'alpha', alpha_v, ...
+               'est_filter_window', 10, 'est_hold_time', 0.1);
+    cmd = mfc_command_mimo_block('n', n_m, 'alpha', alpha_v);
+
+    sp_ref = [1; 0.5];
+    err_km1 = zeros(n_m, 1);  int_err = zeros(n_m, 1);  u_prev = zeros(n_m, 1);
+    y = zeros(n_m, 1);  dy = zeros(n_m, 1);
+    worst = 0;
+    for k = 1:200
+        tk = (k-1)*Ts;
+
+        u_core = step(core, sp_ref, y, tk);
+
+        [sp_filt, ~, ddot_sp] = step(smo, sp_ref);
+        F_hat = step(fes, y, u_prev, tk);
+        err   = y - sp_filt;
+        [fb, int_err] = mfc_siso.feedback(err, err_km1, int_err, Ts, 25, 10, 0, false);
+        err_km1 = err;
+        u_comp  = step(cmd, F_hat, ddot_sp, fb);
+        u_prev  = u_comp;
+
+        worst = max(worst, max(abs(u_core - u_comp)));
+
+        % one shared plant, driven by the core's command
+        ddy = -[9.81; 9.81] - 0.2*dy + [1 0.35; -0.2 1.2]*u_core;
+        dy  = dy + Ts*ddy;
+        y   = y + Ts*dy;
+    end
+    check(sprintf('mimo core: equals the hand-composed loop (max|du|=%.3g)', worst), ...
+          worst < 1e-12);
+
+    % ---------------------------------------------------------------------
+    % 11) mfc_fhat_decoupled_dev_block. Its whole claim is that each mask
+    %     setting IS the specific block it replaces, so that is what is
+    %     tested: all eight settings (2 orders x 2 estimators x {n=1, n=2})
+    %     against the block a finished model would ship instead. Bit-exact
+    %     is demanded, not a tolerance -- the dev block calls the same
+    %     kernel with the same arguments, so anything else is a bug.
+    % ---------------------------------------------------------------------
+    ORD2 = {'First order (dot_y = F + alpha*u)', 'Second order (ddot_y = F + alpha*u)'};
+    a_s  = 2;                       % scalar alpha
+    a_v  = [2 0.3; -0.1 1.5];       % matrix alpha
+
+    for oi = 1:2
+        for kind = {'Algebraic (growing window)', 'Sliding window (FIR taps)'}
+            for width = [1 2]
+                if width == 1, al = a_s; else, al = a_v; end
+                algebraic = strncmp(kind{1}, 'Algebraic', 9);
+
+                dev = mfc_fhat_decoupled_dev_block('n', width, 'Ts', Ts, 'alpha', al, ...
+                          'model_order', ORD2{oi}, 'estimator', kind{1}, ...
+                          'est_filter_window', 10, 'est_hold_time', 0.1, ...
+                          'window_samples', 20);
+
+                % the block a finished model would use instead
+                if algebraic && oi == 1 && width == 1
+                    ref_blk = mfc_fhat_alg1_decoupled_block('Ts', Ts, 'alpha', al, ...
+                                  'est_filter_window', 10, 'est_hold_time', 0.1);
+                elseif algebraic && oi == 2 && width == 1
+                    ref_blk = mfc_fhat_alg2_decoupled_block('Ts', Ts, 'alpha', al, ...
+                                  'est_filter_window', 10, 'est_hold_time', 0.1);
+                elseif algebraic && oi == 1
+                    ref_blk = mfc_fhat_alg1_decoupled_mimo_block('n', width, 'Ts', Ts, ...
+                                  'alpha', al, 'est_filter_window', 10, 'est_hold_time', 0.1);
+                elseif algebraic
+                    ref_blk = mfc_fhat_alg2_decoupled_mimo_block('n', width, 'Ts', Ts, ...
+                                  'alpha', al, 'est_filter_window', 10, 'est_hold_time', 0.1);
+                elseif width == 1
+                    ref_blk = mfc_fhat_window_block('Ts', Ts, 'alpha', al, ...
+                                  'model_order', ORD2{oi}, 'window_samples', 20);
+                else
+                    ref_blk = mfc_fhat_window_mimo_block('n', width, 'Ts', Ts, 'alpha', al, ...
+                                  'model_order', ORD2{oi}, 'window_samples', 20);
+                end
+
+                same = true;  nonzero = false;
+                for k = 1:200
+                    tk = (k-1)*Ts;
+                    if width == 1
+                        yk = 0.3*sin(5*tk) + 0.2;   uk = cos(2*tk);
+                    else
+                        yk = yv(tk);                uk = uv(tk);
+                    end
+                    Fd = step(dev, yk, uk, tk);
+                    Fr = step(ref_blk, yk, uk, tk);
+                    same    = same && isequal(Fd, Fr);
+                    nonzero = nonzero || any(Fd ~= 0);
+                end
+                check(sprintf('dev bench (%s / %s / n=%d): identical to %s', ...
+                      ORD2{oi}(1:5), kind{1}(1:5), width, class(ref_blk)), same);
+                check(sprintf('dev bench (%s / %s / n=%d): F_hat is not identically zero', ...
+                      ORD2{oi}(1:5), kind{1}(1:5), width), nonzero);
+            end
+        end
+    end
+
+    % Ports must not move when the dropdowns do -- that is the whole point.
+    d1 = mfc_fhat_decoupled_dev_block('n', 2, 'Ts', Ts, 'alpha', a_v, ...
+             'model_order', ORD2{1}, 'estimator', 'Sliding window (FIR taps)');
+    d2 = mfc_fhat_decoupled_dev_block('n', 2, 'Ts', Ts, 'alpha', a_v, ...
+             'model_order', ORD2{2}, 'estimator', 'Algebraic (growing window)');
+    check('dev bench: ports are y,u_prev,t -> F_hat whatever the variant', ...
+          isequal(cellstr(d1.getInputNames()),  {'y'; 'u_prev'; 't'}) && ...
+          isequal(cellstr(d2.getInputNames()),  {'y'; 'u_prev'; 't'}) && ...
+          isequal(cellstr(d1.getOutputNames()), {'F_hat'}) && ...
+          isequal(cellstr(d2.getOutputNames()), {'F_hat'}));
+
+    bad_dev = false;
+    try
+        dbad = mfc_fhat_decoupled_dev_block('n', 3, 'alpha', eye(2));
+        step(dbad, zeros(3,1), zeros(3,1), 0);
+    catch
+        bad_dev = true;
+    end
+    check('dev bench: a wrong-size alpha is rejected', bad_dev);
 
     fprintf('\n%d passed, %d failed\n', N_PASS, N_FAIL);
     if N_FAIL > 0

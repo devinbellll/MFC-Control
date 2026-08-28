@@ -1,10 +1,11 @@
 # The block library and signal flow
 
-Ten blocks in `blocks/`. One is the assembled controller; the other nine are
-the pieces you build a loop from — seven SISO (scalar `alpha`) and two MIMO
-(square-matrix `alpha`). All of them are thin `matlab.System` wrappers — **no
-math lives in `blocks/`**, only ports, state and masks. The math is in
-`functions/`.
+Nineteen blocks in `blocks/`. Two are assembled controllers — `mfc_siso_core`
+and `mfc_mimo_core` — one is an estimator bench (`mfc_fhat_decoupled_dev_block`),
+and the other sixteen are the pieces you build a loop from: eight SISO (scalar
+`alpha`) and eight n-channel (square-matrix `alpha`).
+All of them are thin `matlab.System` wrappers — **no math lives in `blocks/`**,
+only ports, state and masks. The math is in `functions/`.
 
 Generate the Simulink library with `build_mfc_lib` (run once in MATLAB); it
 builds `library/mfc_lib.mdl` from these classes, so the classes stay the single
@@ -21,6 +22,20 @@ you have to remember to set. Model order is likewise separate blocks.
 block (stock Discrete PID), no command-filter block (stock Discrete Filter), and
 no divide block.
 
+**The benches are the deliberate exception.** `mfc_siso_core` and
+`mfc_mimo_core` put the whole variant grid on one mask; `mfc_fhat_decoupled_dev_block`
+does the same one stage down, for the estimator alone. The cores are the
+assembled reference implementation, and both are where you find out which
+variant you want — a sweep becomes a parameter change instead of a rewiring
+job. Ship the specific blocks, whose port names state the structure.
+
+The estimator bench can only reach the **decoupled, non-Riachy** grid, and that
+is what makes it possible rather than what limits it: those four variants (times
+any `n`) share one wiring diagram, so they are interchangeable behind fixed
+ports. Coupled estimators take `err` and carry the gains they fold; Riachy's
+$\hat F$ means something else and needs its own `ff`. Neither can hide behind an
+unchanged port list.
+
 ## The blocks
 
 | Block | In → Out |
@@ -34,7 +49,15 @@ no divide block.
 | `mfc_fhat_alg1_coupled_block` | `err, u_prev, t` (+`alpha`) → `F_hat` |
 | `mfc_fhat_alg2_coupled_block` | `err, u_prev, t` (+`alpha`) → `F_hat` |
 | `mfc_command_block` | `F_hat, ff, fb` (+`alpha`) → `u` |
+| `mfc_mimo_core` | `y_sp, y_m, t` (n-by-1) (+`u_applied`,`alpha`) → `u, F_hat, sp_filt, err, u_raw` (n-by-1) |
+| `mfc_fhat_decoupled_dev_block` | `y, u_prev, t` (n-by-1) (+`alpha`) → `F_hat` (n-by-1) — order/estimator/`n` on the mask |
+| `mfc_smoother_mimo_block` | `x` (n-by-1) → `x_filt` (+`dot_x`,`ddot_x`), all n-by-1 |
+| `mfc_fhat_alg1_decoupled_mimo_block` | `y, u_prev, t` (n-by-1) (+`alpha`, n-by-n) → `F_hat` (n-by-1) |
 | `mfc_fhat_alg2_decoupled_mimo_block` | `y, u_prev, t` (n-by-1) (+`alpha`, n-by-n) → `F_hat` (n-by-1) |
+| `mfc_fhat_window_mimo_block` | `y, u_prev, t` (n-by-1) (+`alpha`, n-by-n) → `F_hat` (n-by-1) |
+| `mfc_fhat_riachy2_mimo_block` | `y, u_prev, t` (n-by-1) (+`alpha`) → `F_hat` (+`Y`), n-by-1 |
+| `mfc_fhat_alg1_coupled_mimo_block` | `err, u_prev, t` (n-by-1) (+`alpha`) → `F_hat` (n-by-1) |
+| `mfc_fhat_alg2_coupled_mimo_block` | `err, u_prev, t` (n-by-1) (+`alpha`) → `F_hat` (n-by-1) |
 | `mfc_command_mimo_block` | `F_hat, ff, fb` (n-by-1) (+`alpha`, n-by-n) → `u` (n-by-1) |
 
 The estimator's **first input port name tells you the structure**: `y` means
@@ -48,9 +71,11 @@ so the derivative feedback arrives inside the estimate. Its PID therefore needs
 **D = 0** and its `ff` needs $\ddot{sp} + K_D\,\dot{sp}$ — see
 [[riachy-trick]].
 
-The last two rows are the **MIMO pair**: the same 2nd-order decoupled math and
-the same command-block inversion, but on n-by-1 vector signals with a square
-n-by-n `alpha`. See [The matrix-alpha (MIMO) pair](#the-matrix-alpha-mimo-pair)
+The bottom block is the **n-channel surface**: the same math on n-by-1 vector
+signals with a square n-by-n `alpha` (and, for the coupled estimators, square
+`Kp`/`Kd`). It mirrors the SISO surface block for block, with one absence that
+is structural rather than an omission — see
+[The n-channel (matrix-alpha) surface](#the-n-channel-matrix-alpha-surface)
 below.
 
 Gains appear only on the block that actually uses them: `Kp`/`Kd` on the coupled
@@ -88,13 +113,11 @@ Coupled (`Kp`, `Kd` live inside `F_hat`; `fb` is Ground unless you want `Ki`):
                         └── plant ◄───────────┴──────── [unit delay] ◄──────────────┘
 ```
 
-## The matrix-alpha (MIMO) pair
+## The n-channel (matrix-alpha) surface
 
-`mfc_fhat_alg2_decoupled_mimo_block` and `mfc_command_mimo_block` are the
-vector-valued twins of the 2nd-order decoupled estimator and the command
-block: same math, same wiring diagram as "Decoupled" above, but `y`, `u_prev`,
-`F_hat`, `ff`, `fb` and `u` are all n-by-1, and `alpha` is a square,
-invertible n-by-n matrix instead of a scalar:
+Every SISO block has a vector-valued twin: same math, same wiring diagrams as
+above, but `y`, `u_prev`, `F_hat`, `ff`, `fb` and `u` are all n-by-1, and
+`alpha` is a square, invertible n-by-n matrix instead of a scalar:
 
 ```
        F_hat, ff, fb, u : n-by-1
@@ -104,8 +127,9 @@ invertible n-by-n matrix instead of a scalar:
   command:    alpha * u = -F_hat + ff - fb   ->  u = alpha \ (-F_hat + ff - fb)
 ```
 
-The channels are cross-coupled **through `alpha` alone** — there is no other
-coupling in either block. `t` stays a single scalar clock shared by the whole
+The channels are cross-coupled **through `alpha` alone** in the decoupled
+blocks — and additionally through matrix `Kp`/`Kd` in the coupled ones, and
+through matrix `Kd` in `mfc_fhat_riachy2_mimo_block`. `t` stays a single scalar clock shared by the whole
 vector (not one per channel): the estimator's `den_raw = t^2` is scalar, and
 only the numerator (`num_raw`, built from `z` and `alpha*u_prev`) is
 per-element. That is what lets one growing window serve every channel, and it
@@ -118,10 +142,24 @@ decoupled loop below, plus one more:
 - `err = y - sp_filt` and `u_prev` through a real Unit Delay, exactly as SISO
   — `mfc_smoother_block` and a per-channel PID (or a vector Discrete PID) can
   stay as-is, since they don't need to know about `alpha`.
-- Only a **decoupled** MIMO estimator exists — there is no coupled or
-  sliding-window MIMO variant (mirroring the SISO library: coupled folding
-  and the window taps were never generalized to a matrix `alpha`). Wire an
-  explicit feedback law into `fb`, same as any decoupled SISO loop.
+- The grid is **complete except where it is undefined**: 1st and 2nd order,
+  coupled and decoupled, algebraic and sliding window, plus Riachy's trick.
+  The one gap is coupled + sliding window, which does not exist at any width
+  — an FIR window has nowhere to fold poles, see [[estimator-sliding-window]].
+  There is no `mfc_fhat_riachy1_*` either, and there never will be: a
+  first-order iP has no derivative feedback to remove, so the trick has
+  nothing to do.
+- The **coupled** estimators fold MATRIX `Kp` (and `Kd` at 2nd order), so the
+  closed loop is a matrix polynomial and off-diagonal entries fold
+  *cross-channel* P/D action into $\hat F$. That is the one thing they do
+  that n SISO coupled blocks side by side cannot. They are also the
+  tuning-fragile corner: with the channels' own dynamics unequal the same
+  gains that work per-channel can diverge, because nothing explicit is left
+  outside $\hat F$ to absorb the mismatch. The decoupled variants tolerate
+  it. `tests/golden/mimo_2nd_coupled_alg.csv` is captured on a plant with
+  identical per-channel dynamics for exactly this reason.
+- `mfc_fhat_window_mimo_block` does **no internal smoothing** (nothing FIR
+  does) — follow it with `mfc_smoother_mimo_block` if $\hat F$ is noisy.
 - **The same `alpha` matrix must be fed to both blocks.** This matters more
   than in the scalar case: an estimator/command mismatch does not just bias
   the model gain, it can silently swap which physical channels are coupled.
@@ -214,9 +252,14 @@ Yes, and it is tested three ways:
 | `tests/test_estimators.m` §5 | MATLAB | the stage **blocks** reproduce `mfc_siso_core` to `1e-12`, coupled and decoupled |
 | `examples/val_mfc_composed.m` | MATLAB | the same, as a runnable overlay plot |
 
-The MIMO pair has its own no-regression contract, `tests/test_golden_mimo.m`
-(golden traces `mimo_diag` and `mimo_cross`) — see [The matrix-alpha (MIMO)
-pair](#the-matrix-alpha-mimo-pair) above.
+The n-channel surface has its own no-regression contract,
+`tests/test_golden_mimo.m` (traces `mimo_diag`, `mimo_cross`,
+`mimo_1st_decoupled_alg`, `mimo_2nd_decoupled_win`, `mimo_2nd_coupled_alg`),
+and Riachy's trick has `tests/test_golden_riachy.m` (`riachy_win`,
+`riachy_alg`, `riachy_mimo_win`, `riachy_mimo_alg`, the last two with a
+non-diagonal $K_D$). `tests/test_estimators.m` §10 pins the other half of the
+claim: `mfc_mimo_core` at n = 1 reproduces `mfc_siso_core` bit for bit, and at
+n = 2 reproduces a loop hand-composed from the individual blocks.
 
 `mfc_siso.feedback` and `mfc_siso.limit` still exist in `functions/` — no block
 wraps them, but `mfc_siso.step` (and so `mfc_siso_core`) does, and the tests use

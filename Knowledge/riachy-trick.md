@@ -130,6 +130,33 @@ and `tests/test_estimators.m` §8 (ports, masks, reduction to the SISO block).
 `mfc_fhat_sliding_window` grew a column per channel in its buffers to make this
 work; the scalar path is byte-for-byte unchanged.
 
+## There is no first-order Riachy
+
+Not missing — **meaningless**. The trick removes $K_D\dot e$ from an iPD by
+moving it inside $\mathfrak F$. A first-order ultra-local model
+($\dot y = F + \alpha u$) closes with an iP: a single pole at $-K_P$, no
+derivative feedback anywhere, nothing to remove. There is no $K_D$ to fold into
+$Y$, and folding $K_P$ instead would give $\dot Y = \dot y + K_P y$, i.e. the
+*coupled* first-order estimator ([[control-law-coupled-vs-decoupled]]) by a
+longer route. So the grid stops at second order, at every width, on purpose.
+
+## The no-regression contract
+
+`tests/test_riachy.m` checks that the trick *behaves*; `tests/test_golden_riachy.m`
+pins the actual numbers, over four traces: `riachy_win`, `riachy_alg`,
+`riachy_mimo_win`, `riachy_mimo_alg` (the last two with a **non-diagonal**
+$K_D$, so cross-channel derivative folding is in the contract). It also
+re-derives $Y$ from the logged measurement at every sample, which is what would
+catch a forward Euler slipping in where the trapezoid belongs.
+
+Two tuning facts fell out of capturing those traces, and both are the same
+fact: $\mathfrak F$ carries $K_D\dot y$ and therefore **moves fast**, so any
+estimator lag is expensive. At $T_s = 10$ ms with a 4 rad/s target, $T_w = 0.4$ s
+diverges and $T_w = 0.1$ s tracks to $10^{-6}$; the algebraic variant needs its
+num/den smoother halved (10 → 5 samples) for the same reason. Neither is a
+property of the plant — it is the price named in *What it costs* below, showing
+up as a tuning constraint.
+
 ## The noise result, which is arguably the bigger win
 
 Removing $K_D \dot e$ removes the loop's dominant noise path. In a

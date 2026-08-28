@@ -55,8 +55,13 @@ function [F_hat, state, dbg] = mfc_fhat_algebraic_first_order( ...
 %     state : updated state struct
 %     dbg   : debug struct: num_raw, den_raw, num_filt, den_filt, valid
 %
+%   VECTOR-SAFE. z, u_prev and F_hat may be n-by-1 with a square n-by-n
+%   alpha (and, when coupled, a square b_fold): the numerator is
+%   per-element while the denominator t is scalar and SHARED, which is what
+%   lets one growing window serve the whole vector.
+%
 %   See also MFC_FHAT_ALGEBRAIC_SECOND_ORDER, MFC_FHAT_SLIDING_WINDOW,
-%   MFC_SISO.STEP.
+%   MFC_FHAT_ALG1_DECOUPLED_MIMO_BLOCK, MFC_SISO.STEP.
 
 % Growing-window annihilator, discretized (backward differences)
 num_raw = -z + (t*z - (t - Ts)*state.z_km1)/Ts - t*alpha*u_prev - t*b_fold*z;
@@ -70,7 +75,9 @@ valid = (den_filt ~= 0) && (t > hold_time);
 if valid
     F_hat = num_filt / den_filt;
 else
-    F_hat = 0;
+    % zeros(size(z)), not 0: z may be a vector (matrix-alpha / MIMO use),
+    % and the held output must keep the port width. Identical for scalar z.
+    F_hat = zeros(size(z));
 end
 
 % Advance estimator state

@@ -24,9 +24,22 @@ honest.
 
 ## The shape of the library
 
-`mfc_siso_core` is the all-in-one controller and the reference implementation.
-Everything else composes a loop by hand out of a smoother, an estimator and the
-command block.
+`mfc_siso_core` is the all-in-one controller and the reference implementation;
+`mfc_mimo_core` is its n-channel twin and the whole-loop development bench — the
+whole non-Riachy grid (order x structure x estimator x channel count) on one
+mask, so a variant sweep is a parameter sweep. At `n = 1` it takes the scalar
+code path and reproduces `mfc_siso_core` bit for bit.
+`mfc_fhat_decoupled_dev_block` is the same idea for the ESTIMATOR alone: order,
+estimator and `n` on the mask, `F_hat` out, ports that never change — reaching
+the decoupled non-Riachy grid only, which is precisely the set that shares one
+wiring diagram. Everything else composes a loop by hand out of a smoother, an
+estimator and the command block.
+
+Every SISO block has an n-channel twin (`*_mimo_block`): same math on n-by-1
+signals with a square n-by-n `alpha`, and square `Kp`/`Kd` where the estimator
+folds them. The grid is complete except for coupled + sliding window, which is
+undefined at any width (an FIR window has nowhere to fold poles), and
+first-order Riachy, which is meaningless (an iP has no derivative to remove).
 
 Two rules explain what is and is not a block:
 
@@ -53,6 +66,12 @@ Consequences worth knowing before "fixing" something:
 - The algebraic estimators smooth numerator and denominator internally with one
   shared window. That is mathematically essential, not a convenience — it is why
   there is no divide block and why the raw ingredients are not exposed.
+- The n-channel estimators share ONE integration window across the vector: the
+  numerator is per-element, the denominator (`t`, `t^2`, or the FIR taps) is
+  scalar. Do not give a channel its own window.
+- The coupled n-channel estimators are the tuning-fragile corner: with unequal
+  per-channel dynamics, gains that work per-channel can diverge, because nothing
+  explicit is left outside `F_hat` to absorb the mismatch.
 - Estimator blocks emit `F_hat` only; the old `valid` / `num_raw` / `den_raw` /
   `integral` debug ports are gone.
 
@@ -75,6 +94,8 @@ octave --no-gui -q --path tests --path functions --eval octave_sanity
 octave --no-gui -q --path tests --path functions --eval test_golden
 octave --no-gui -q --path tests --path functions --eval test_composed
 octave --no-gui -q --path tests --path functions --eval test_riachy
+octave --no-gui -q --path tests --path functions --eval test_golden_mimo
+octave --no-gui -q --path tests --path functions --eval test_golden_riachy
 ```
 
 ```matlab
@@ -84,10 +105,16 @@ octave --no-gui -q --path tests --path functions --eval test_riachy
 
 `tests/test_riachy.m` covers Riachy's trick (the transform, the estimate, and
 a composed loop against the ordinary iPD), §4 the NxN port; `tests/test_estimators.m`
-§7 covers its block layer and §8 the NxN one.
+§7 covers its block layer and §8 the NxN one, §9 the rest of the n-channel
+estimator surface, §10 `mfc_mimo_core` and §11 `mfc_fhat_decoupled_dev_block`
+(every setting against the specific block it stands in for). `tests/test_golden_riachy.m` is
+Riachy's no-regression contract, SISO and NxN.
 
-`tests/golden/*.csv` is the no-regression contract across all six supported
-variants. `test_composed` and `test_estimators` §5 both assert that a
+`tests/golden/*.csv` is the no-regression contract: six SISO variants
+(`test_golden`), five n-channel ones (`test_golden_mimo`) and four Riachy ones
+(`test_golden_riachy`). The capture scripts take variant names --
+`golden_capture_mimo('name')` -- so ADDING a variant never rewrites the
+existing files, which is how a regression gets blessed by accident. `test_composed` and `test_estimators` §5 both assert that a
 hand-assembled loop reproduces `mfc_siso_core` exactly (`mfc_siso.feedback`
 stands in for the stock PID so the comparison stays bit-exact). If you change a
 stage, those are the tests that catch it.
@@ -98,6 +125,9 @@ stage, those are the tests that catch it.
   and flag downstream impact rather than silently reshaping a block.
 - Math goes in `functions/`, never in `blocks/`. If a block starts computing,
   it is in the wrong file.
+- Width is not a fork in the math: `mfc_siso.step` runs both widths, and the
+  kernels are vector-safe. If you find yourself writing a `*_mimo` copy of a
+  function in `functions/`, stop.
 - Regenerate `library/mfc_lib.mdl` with `build_mfc_lib` after any block add,
   remove or rename.
 - Obsidian conventions: `[[wikilinks]]`, flat YAML frontmatter. Filename stem is

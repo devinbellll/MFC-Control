@@ -1,9 +1,17 @@
 function test_golden_mimo()
-%TEST_GOLDEN_MIMO Assert the 2x2 MIMO pair reproduces the reference traces,
+%TEST_GOLDEN_MIMO Assert the 2x2 MIMO variants reproduce the reference traces,
 %and cross-checks the diagonal-alpha case against the existing SISO trace
 %it must reduce to.
 %
 %   octave --no-gui -q tests/test_golden_mimo.m     (also runs in MATLAB)
+%
+%   Five variants: the two hand-wired ones described below, plus
+%   'mimo_1st_decoupled_alg', 'mimo_2nd_decoupled_win' and
+%   'mimo_2nd_coupled_alg', which cover the rest of the n-channel estimator
+%   grid and are driven through mfc_siso.config/step -- the same pipeline
+%   mfc_mimo_core runs -- on a plant with a genuine matrix input gain. See
+%   MFC_GOLDEN_TRACE_MIMO for what each one pins, including why the coupled
+%   variant needs identical per-channel dynamics to stay stable.
 %
 %   Two properties matter most for a firmware port and are what this test
 %   pins:

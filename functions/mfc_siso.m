@@ -69,9 +69,21 @@ function cfg = config(varargin)
 %         sliding_window: fixed-length FIR window integral, exact taps
 %                         (decoupled only -- coupled+sliding_window errors).
 %
+%   Channel count
+%     'n'            : number of channels (default 1). n = 1 is the scalar
+%         SISO controller and is the DEFAULT PATH in every sense -- the
+%         command is a division, the anti-windup handshake is a scalar
+%         test. n > 1 makes every signal n-by-1, alpha a square n-by-n
+%         matrix inverted by MFC_SISO.COMMAND_MIMO, the gains scalars or
+%         n-by-n matrices, and the saturation freeze per-channel. Nothing
+%         else changes: the estimator kernels are vector-safe already,
+%         because their numerator is per-element while their denominator
+%         (t, t^2, or the FIR taps) is scalar and shared.
+%
 %   Tuning
 %     'Ts'                : sample time [s] (default 0.01)
-%     'alpha'             : ultra-local model input gain (default 1)
+%     'alpha'             : ultra-local model input gain (default 1;
+%                           square n-by-n when n > 1)
 %     'Kp', 'Kd', 'Ki'    : feedback gains (defaults 25, 10, 0).
 %         2nd order: characteristic polynomial s^2 + Kd*s + Kp
 %                    (double pole at -p  <=>  Kd = 2p, Kp = p^2).
@@ -102,6 +114,7 @@ function cfg = config(varargin)
 %   to logicals cfg.coupled / cfg.algebraic) plus cfg.kernel.
 
     p = struct( ...
+        'n',                 1, ...
         'model_order',       2, ...
         'structure',         'coupled', ...
         'estimator',         'algebraic', ...
@@ -143,11 +156,17 @@ function cfg = config(varargin)
          'with estimator=''sliding_window''.']);
 
     % --- validate tuning -------------------------------------------------
+    validateattributes(p.n, {'numeric'}, {'scalar', 'integer', 'positive'}, '', 'n');
+    if p.n > 1
+        assert(isequal(size(p.alpha), [p.n p.n]), ...
+            'mfc_siso.config: with n = %d, alpha must be %d-by-%d.', p.n, p.n, p.n);
+    end
     validateattributes(p.Ts, {'numeric'}, {'scalar', 'positive'}, '', 'Ts');
     validateattributes(p.command_filter, {'numeric'}, {'scalar', '>=', 1}, '', 'command_filter');
     validateattributes(p.ref_filter_window, {'numeric'}, {'scalar', 'nonnegative'}, '', 'ref_filter_window');
     validateattributes(p.est_filter_window, {'numeric'}, {'scalar', 'positive'}, '', 'est_filter_window');
-    assert(p.u_max > p.u_min, 'mfc_siso.config: u_max must exceed u_min.');
+    % all(): the limits may be n-by-1 when n > 1 (per-channel actuator range)
+    assert(all(p.u_max > p.u_min), 'mfc_siso.config: u_max must exceed u_min.');
 
     % --- precompute the sliding-window kernel ----------------------------
     % Computed for EVERY variant: under code generation both estimator
@@ -178,14 +197,18 @@ function state = init(cfg)
 %
 %   Window buffers are sized from the precomputed quadrature kernel for
 %   sliding-window variants and collapse to scalar placeholders for
-%   algebraic variants.
+%   algebraic variants. Every field is sized from cfg.n, so the same state
+%   struct serves the scalar controller (n = 1) and the vector one; the
+%   denominator history stays SCALAR at any n, because the estimators share
+%   one integration window across the channels.
 %
 %   State fields
 %     .sp_filt_km1/2   reference trajectory filter history
 %     .z_km1, .z_km2   algebraic estimator drive-signal history
 %     .num_filt_km1/2  algebraic estimator smoothed numerator history
 %     .den_filt_km1/2  algebraic estimator smoothed denominator history
-%     .y_buf, .u_buf   sliding-window buffers [(n+1)x1], newest last
+%     .y_buf, .u_buf   sliding-window buffers [(win+1) x cfg.n], newest
+%                      last, one COLUMN per channel
 %     .err_km1         previous tracking error (derivative / integral)
 %     .int_err         trapezoidal error integral
 %     .u_km1           previously issued command (internal feedback path)
@@ -196,20 +219,21 @@ function state = init(cfg)
         n_buf = cfg.kernel.n_intervals + 1;
     end
 
+    nc = cfg.n;
     state = struct( ...
-        'sp_filt_km1',  0, ...
-        'sp_filt_km2',  0, ...
-        'z_km1',        0, ...
-        'z_km2',        0, ...
-        'num_filt_km1', 0, ...
-        'num_filt_km2', 0, ...
-        'den_filt_km1', 0, ...
+        'sp_filt_km1',  zeros(nc, 1), ...
+        'sp_filt_km2',  zeros(nc, 1), ...
+        'z_km1',        zeros(nc, 1), ...
+        'z_km2',        zeros(nc, 1), ...
+        'num_filt_km1', zeros(nc, 1), ...
+        'num_filt_km2', zeros(nc, 1), ...
+        'den_filt_km1', 0, ...            % t / t^2: scalar, shared by all channels
         'den_filt_km2', 0, ...
-        'y_buf',        zeros(n_buf, 1), ...
-        'u_buf',        zeros(n_buf, 1), ...
-        'err_km1',      0, ...
-        'int_err',      0, ...
-        'u_km1',        0);
+        'y_buf',        zeros(n_buf, nc), ...
+        'u_buf',        zeros(n_buf, nc), ...
+        'err_km1',      zeros(nc, 1), ...
+        'int_err',      zeros(nc, 1), ...
+        'u_km1',        zeros(nc, 1));
 end
 
 
@@ -224,6 +248,13 @@ function [out, state] = step(setpoint, measure, t, u_prev, alpha, cfg, state)
 %   anti-windup. Each stage is one call to the corresponding stage method
 %   below, so the all-in-one block and the individual stage blocks execute
 %   the same code.
+%
+%   WIDTH. With cfg.n > 1 every signal is n-by-1, alpha is a square n-by-n
+%   matrix and the command becomes a linear solve (MFC_SISO.COMMAND_MIMO);
+%   the saturation freeze is then per-channel. The estimator dispatch and
+%   the feedback law are unchanged -- the kernels are vector-safe, and the
+%   gains may be scalars or n-by-n matrices. n = 1 executes exactly the
+%   scalar code it always did.
 %
 %   Variant dispatch (cfg from mfc_siso.config):
 %
@@ -312,12 +343,21 @@ function [out, state] = step(setpoint, measure, t, u_prev, alpha, cfg, state)
     else
         ff = dot_sp;
     end
-    u_raw = mfc_siso.command(F_hat, ff, feedback, alpha);
+    if cfg.n > 1
+        u_raw = mfc_siso.command_mimo(F_hat, ff, feedback, alpha);   % linear solve
+    else
+        u_raw = mfc_siso.command(F_hat, ff, feedback, alpha);        % division
+    end
 
     % --- 5) Output EMA filter, then saturation with anti-windup ----------
     [u, frozen] = mfc_siso.limit(u_raw, u_prev, cfg.command_filter, ...
                                  cfg.use_control_sat, cfg.u_min, cfg.u_max);
-    if frozen
+    if cfg.n > 1
+        % Per-channel freeze: one saturated actuator must not stop the
+        % other channels' integrators. The scalar branch below is kept
+        % literally as it was, so the SISO path is untouched.
+        int_err(frozen) = state.int_err(frozen);
+    elseif frozen
         int_err = state.int_err;        % freeze integrator (anti-windup)
     end
 

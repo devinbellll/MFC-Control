@@ -61,6 +61,11 @@ function [F_hat, state, dbg] = mfc_fhat_algebraic_second_order( ...
 %     state : updated state struct
 %     dbg   : debug struct: num_raw, den_raw, num_filt, den_filt, valid
 %
+%   VECTOR-SAFE. z, u_prev and F_hat may be n-by-1 with a square n-by-n
+%   alpha (and, when coupled, square a_fold/b_fold): the numerator is
+%   per-element while the denominator t^2 is scalar and SHARED, which is
+%   what lets one growing window serve the whole vector.
+%
 %   See also MFC_FHAT_ALGEBRAIC_FIRST_ORDER, MFC_FHAT_SLIDING_WINDOW,
 %   MFC_SISO.STEP.
 

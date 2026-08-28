@@ -16,10 +16,18 @@ function build_mfc_lib(varargin)
 %                            that variant actually folds on the mask
 %     model order            different estimator blocks (1st vs 2nd)
 %
-%   The one exception is mfc_fhat_riachy2_block, whose estimator kind
-%   (algebraic or sliding window) IS a mask parameter: both choices give
-%   the same ports, the same wiring and the same Fk -- only the numerics
-%   differ, so it is a tuning knob and not a structure.
+%   The one exception is mfc_fhat_riachy2_block (and its vector twin
+%   mfc_fhat_riachy2_mimo_block), whose estimator kind (algebraic or
+%   sliding window) IS a mask parameter: both choices give the same ports,
+%   the same wiring and the same Fk -- only the numerics differ, so it is a
+%   tuning knob and not a structure.
+%
+%   The core blocks -- mfc_siso_core and mfc_mimo_core -- and
+%   mfc_fhat_decoupled_dev_block put a variant grid on one mask on purpose.
+%   The cores are the assembled reference implementation; the dev block is
+%   the same idea for the estimator alone (decoupled grid only, F_hat out,
+%   ports that never change). Both are benches: the specific blocks are what
+%   a finished loop should be built from.
 %
 %   Anything Simulink already does well is NOT wrapped: the explicit
 %   feedback law is a stock Discrete PID Controller into the command
@@ -57,8 +65,11 @@ function build_mfc_lib(varargin)
     % Row 2: decoupled estimators (F_hat is the true plant dynamics).
     % Row 3: coupled estimators (feedback poles folded into F_hat).
     % Row 4: the model inversion that ends every composed loop.
-    % Row 5: the matrix-alpha (MIMO) pair -- same math on n-by-1 signals,
-    %        cross-coupled through a square alpha only.
+    % Rows 5-7: the n-channel (MIMO) surface -- same math on n-by-1
+    %        signals, cross-coupled through a square alpha (and, for the
+    %        coupled estimators, square Kp/Kd) only. Row 5 decoupled, row 6
+    %        coupled plus the support blocks, row 7 the two development
+    %        benches (whole loop, and the estimator alone).
     %
     % {class, display name, [x y], annotation}
     B = { ...
@@ -75,9 +86,18 @@ function build_mfc_lib(varargin)
       ...
       'mfc_command_block',              'Command (inversion)',       [ 40 560], 'u = (-F_hat + ff - fb)/alpha, optional clamp'; ...
       ...
-      'mfc_fhat_alg2_decoupled_mimo_block', 'F-hat Alg 2nd (decoupled, matrix alpha)', [ 40 740], 'in: y (n-by-1) -- vector signals, square n-by-n alpha'; ...
-      'mfc_fhat_riachy2_mimo_block',        'F-hat Riachy 2nd (matrix gains)',          [340 740], 'in: y (n-by-1) -- Y = y + Kd*int y, square n-by-n Kd and alpha'; ...
-      'mfc_command_mimo_block',             'Command (inversion, matrix alpha)',       [640 740], 'u = alpha\(-F_hat + ff - fb), vector signals'};
+      'mfc_fhat_alg1_decoupled_mimo_block', 'F-hat Alg 1st (decoupled, matrix alpha)', [ 40 740], 'in: y (n-by-1) -- ff = dot_sp at 1st order'; ...
+      'mfc_fhat_alg2_decoupled_mimo_block', 'F-hat Alg 2nd (decoupled, matrix alpha)', [340 740], 'in: y (n-by-1) -- vector signals, square n-by-n alpha'; ...
+      'mfc_fhat_window_mimo_block',         'F-hat Sliding Window (matrix alpha)',     [640 740], 'in: y (n-by-1) -- decoupled only; no internal smoothing'; ...
+      'mfc_fhat_riachy2_mimo_block',        'F-hat Riachy 2nd (matrix gains)',         [940 740], 'in: y (n-by-1) -- Y = y + Kd*int y, square n-by-n Kd and alpha'; ...
+      ...
+      'mfc_fhat_alg1_coupled_mimo_block',   'F-hat Alg 1st (coupled, matrix gains)',   [ 40 920], 'in: err (n-by-1) -- matrix Kp folded, no Kd at 1st order'; ...
+      'mfc_fhat_alg2_coupled_mimo_block',   'F-hat Alg 2nd (coupled, matrix gains)',   [340 920], 'in: err (n-by-1) -- matrix Kp and Kd folded, fb -> Ground'; ...
+      'mfc_smoother_mimo_block',            'IIR Smoother (n channels)',               [640 920], 'channel-wise; the F_hat post-filter for the window estimator'; ...
+      'mfc_command_mimo_block',             'Command (inversion, matrix alpha)',       [940 920], 'u = alpha\(-F_hat + ff - fb), vector signals'; ...
+      ...
+      'mfc_mimo_core',                      'MFC Controller, n channels (dev bench)',  [ 40 1100], 'every non-Riachy variant on the mask; n = 1 reproduces the SISO core'; ...
+      'mfc_fhat_decoupled_dev_block',       'F-hat dev bench (decoupled grid)',        [340 1100], 'in: y -- order/estimator/n on the mask, fixed ports; swap in the specific block to ship'};
 
     for i = 1:size(B, 1)
         cls  = B{i, 1};

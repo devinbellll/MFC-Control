@@ -217,6 +217,65 @@ stw  = struct('y_buf', zeros(kern.n_intervals+1, 1), 'u_buf', zeros(kern.n_inter
 [Fw0, ~, dbgw] = mfc_fhat_sliding_window(1, 1, 1, 0, kern, stw);
 check('window: F is exactly 0 while the window fills', Fw0 == 0 && ~dbgw.valid);
 
+% =====================================================================
+% 10) The rest of the n-channel surface, at the level a C port cares about:
+%     the HELD output keeps the port width, the FIR window is vector-safe,
+%     and the anti-windup freeze is PER CHANNEL. All three are places where
+%     a scalar assumption survives a vector refactor silently -- a held
+%     estimate collapsing to the scalar 0 changes a downstream port width,
+%     and a shared freeze flag stops the wrong integrator.
+% =====================================================================
+nch = 2;
+st1 = struct('z_km1', zeros(nch,1), 'z_km2', zeros(nch,1), ...
+             'num_filt_km1', zeros(nch,1), 'num_filt_km2', zeros(nch,1), ...
+             'den_filt_km1', 0, 'den_filt_km2', 0);
+[Fh1, ~, dbgh1] = mfc_fhat_algebraic_first_order( ...
+    ones(nch,1), ones(nch,1), eye(nch), 0, Ts, 10, 0.1, 0, st1);
+check('MIMO algebraic 1st: held output is zeros(n,1), not scalar 0', ...
+      isequal(Fh1, zeros(nch,1)) && ~dbgh1.valid);
+
+[Fh2, ~, ~] = mfc_fhat_algebraic_second_order( ...
+    ones(nch,1), ones(nch,1), eye(nch), 0, Ts, 10, 0.1, 0, 0, st1);
+check('MIMO algebraic 2nd: held output is zeros(n,1), not scalar 0', ...
+      isequal(Fh2, zeros(nch,1)));
+
+kern_v = mfc_siso.window_kernel(2, 20, Ts);
+stv = struct('y_buf', zeros(kern_v.n_intervals+1, nch), ...
+             'u_buf', zeros(kern_v.n_intervals+1, nch));
+[Fw_hold, ~, ~] = mfc_fhat_sliding_window(ones(nch,1), ones(nch,1), eye(nch), 0, kern_v, stv);
+check('MIMO window: held output is zeros(n,1) while the window fills', ...
+      isequal(Fw_hold, zeros(nch,1)));
+
+% Vector window vs two independent scalar windows, diagonal alpha. NOT
+% bit-exact, unlike the algebraic case above: the tap sum becomes a matrix
+% product, which BLAS accumulates in a different order.
+av = 2;  aw = 3;
+Fv_end = run_window_vec(2, 20, Ts, diag([av aw]), ...
+    @(tt) [0.5*a1*tt.^2; 0.5*a2*tt.^2], [u0; u0]);
+Fs_1 = run_window(2, 20, Ts, av, @(tt) 0.5*a1*tt.^2, u0);
+Fs_2 = run_window(2, 20, Ts, aw, @(tt) 0.5*a2*tt.^2, u0);
+check(sprintf('MIMO window: diagonal alpha does not cross-couple (max|d|=%.3g)', ...
+      max(abs(Fv_end - [Fs_1; Fs_2]))), ...
+      max(abs(Fv_end - [Fs_1; Fs_2])) < 1e-9);
+
+% Per-channel anti-windup: clamp channel 1 hard and leave channel 2 free.
+% Only the clamped channel's integrator may stop advancing.
+cfg_s = mfc_siso.config('n', nch, 'model_order', 2, 'structure', 'decoupled', ...
+    'estimator', 'algebraic', 'Ts', Ts, 'alpha', eye(nch), ...
+    'Kp', 25, 'Kd', 10, 'Ki', 1, 'use_control_sat', true, ...
+    'u_min', [-0.001; -600], 'u_max', [0.001; 600]);
+state_s = mfc_siso.init(cfg_s);
+int_prev = state_s.int_err;
+moved = [false false];
+for k = 1:50
+    [~, state_s] = mfc_siso.step([1; 1], [0; 0], (k-1)*Ts, state_s.u_km1, ...
+                                 eye(nch), cfg_s, state_s);
+    moved = moved | (abs(state_s.int_err - int_prev).' > 0);
+    int_prev = state_s.int_err;
+end
+check('MIMO saturation: the clamped channel freezes its integrator', ~moved(1));
+check('MIMO saturation: the free channel keeps integrating', moved(2));
+
 fprintf('\n%d passed, %d failed\n', N_PASS, N_FAIL);
 if N_FAIL > 0
     error('octave_sanity: %d check(s) failed', N_FAIL);
@@ -239,6 +298,21 @@ function st = zero_state(n_buf)
                 'num_filt_km1', 0, 'num_filt_km2', 0, ...
                 'den_filt_km1', 0, 'den_filt_km2', 0, ...
                 'y_buf', zeros(n_buf, 1), 'u_buf', zeros(n_buf, 1));
+end
+
+function F = run_window_vec(order, win, Ts, alpha, yfun, u0)
+% RUN_WINDOW with n-by-1 signals and a square alpha: the buffers hold one
+% column per channel.
+    n    = numel(u0);
+    kern = mfc_siso.window_kernel(order, win, Ts);
+    st   = struct('y_buf', zeros(kern.n_intervals+1, n), ...
+                  'u_buf', zeros(kern.n_intervals+1, n));
+    N = round(4*kern.Tw/Ts);
+    F = zeros(n, 1);
+    for k = 1:N
+        t = (k-1)*Ts;
+        [F, st] = mfc_fhat_sliding_window(yfun(t), u0, alpha, t, kern, st);
+    end
 end
 
 function F = run_window(order, win, Ts, alpha, yfun, u0)
