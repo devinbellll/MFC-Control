@@ -35,6 +35,10 @@ classdef mfc_fhat_alg1_decoupled_mimo_block < matlab.System
     properties
         % alpha Ultra-local model input gain, square n-by-n (ignored if the live alpha input is enabled)
         alpha = eye(2)
+        % est_filter_window Internal num/den smoother memory [samples]
+        est_filter_window = 10
+        % est_hold_time F_hat held at zero until t exceeds this [s] (guards the near-zero denominator at startup)
+        est_hold_time = 0.1
     end
 
     properties (Nontunable)
@@ -42,10 +46,6 @@ classdef mfc_fhat_alg1_decoupled_mimo_block < matlab.System
         n = 2
         % Ts Sample time [s] (fixes the block's discrete rate)
         Ts = 0.01
-        % est_filter_window Internal num/den smoother memory [samples]
-        est_filter_window = 10
-        % est_hold_time F_hat held at zero until t exceeds this [s] (guards the near-zero denominator at startup)
-        est_hold_time = 0.1
     end
 
     properties (Nontunable, Logical)

@@ -81,6 +81,10 @@ classdef mfc_fhat_riachy2_block < matlab.System
         alpha = 1
         % Kd Derivative gain folded into Y (the Kd of s^2 + Kd*s + Kp); keep D = 0 on the external PID
         Kd = 10
+        % est_filter_window Algebraic only: internal num/den smoother memory [samples]
+        est_filter_window = 10
+        % est_hold_time Algebraic only: F_hat held at zero until t exceeds this [s]
+        est_hold_time = 0.1
     end
 
     properties (Nontunable)
@@ -88,10 +92,6 @@ classdef mfc_fhat_riachy2_block < matlab.System
         estimator = 'Algebraic (growing window)'
         % Ts Sample time [s] (fixes the block's discrete rate)
         Ts = 0.01
-        % est_filter_window Algebraic only: internal num/den smoother memory [samples]
-        est_filter_window = 10
-        % est_hold_time Algebraic only: F_hat held at zero until t exceeds this [s]
-        est_hold_time = 0.1
         % window_samples Sliding window only: window length [intervals]; Tw = window_samples*Ts
         window_samples = 10
     end

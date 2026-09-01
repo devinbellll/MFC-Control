@@ -43,6 +43,10 @@ classdef mfc_fhat_alg1_coupled_mimo_block < matlab.System
         alpha = eye(2)
         % Kp Proportional gain matrix, folded in as b_fold = -Kp (n-by-n). Do NOT also apply it externally.
         Kp = 25*eye(2)
+        % est_filter_window Internal num/den smoother memory [samples]
+        est_filter_window = 10
+        % est_hold_time F_hat held at zero until t exceeds this [s] (guards the near-zero denominator at startup)
+        est_hold_time = 0.1
     end
 
     properties (Nontunable)
@@ -50,10 +54,6 @@ classdef mfc_fhat_alg1_coupled_mimo_block < matlab.System
         n = 2
         % Ts Sample time [s] (fixes the block's discrete rate)
         Ts = 0.01
-        % est_filter_window Internal num/den smoother memory [samples]
-        est_filter_window = 10
-        % est_hold_time F_hat held at zero until t exceeds this [s] (guards the near-zero denominator at startup)
-        est_hold_time = 0.1
     end
 
     properties (Nontunable, Logical)

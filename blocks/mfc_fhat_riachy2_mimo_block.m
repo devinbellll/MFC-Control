@@ -63,6 +63,10 @@ classdef mfc_fhat_riachy2_mimo_block < matlab.System
         alpha = eye(2)
         % Kd Derivative gain folded into Y, square n-by-n (the Kd of ddot_e + Kd*dot_e + Kp*e); keep D = 0 on the external feedback
         Kd = 10*eye(2)
+        % est_filter_window Algebraic only: internal num/den smoother memory [samples]
+        est_filter_window = 10
+        % est_hold_time Algebraic only: F_hat held at zero until t exceeds this [s]
+        est_hold_time = 0.1
     end
 
     properties (Nontunable)
@@ -72,10 +76,6 @@ classdef mfc_fhat_riachy2_mimo_block < matlab.System
         estimator = 'Algebraic (growing window)'
         % Ts Sample time [s] (fixes the block's discrete rate)
         Ts = 0.01
-        % est_filter_window Algebraic only: internal num/den smoother memory [samples]
-        est_filter_window = 10
-        % est_hold_time Algebraic only: F_hat held at zero until t exceeds this [s]
-        est_hold_time = 0.1
         % window_samples Sliding window only: window length [intervals]; Tw = window_samples*Ts
         window_samples = 10
     end

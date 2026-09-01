@@ -64,6 +64,10 @@ classdef mfc_fhat_decoupled_dev_block < matlab.System
     properties
         % alpha Ultra-local model input gain, square n-by-n (ignored if the live alpha input is enabled)
         alpha = 1
+        % est_filter_window Algebraic only: internal num/den smoother memory [samples]
+        est_filter_window = 10
+        % est_hold_time Algebraic only: F_hat held at zero until t exceeds this [s]
+        est_hold_time = 0.1
     end
 
     properties (Nontunable)
@@ -75,10 +79,6 @@ classdef mfc_fhat_decoupled_dev_block < matlab.System
         estimator = 'Algebraic (growing window)'
         % Ts Sample time [s] (fixes the block's discrete rate)
         Ts = 0.01
-        % est_filter_window Algebraic only: internal num/den smoother memory [samples]
-        est_filter_window = 10
-        % est_hold_time Algebraic only: F_hat held at zero until t exceeds this [s]
-        est_hold_time = 0.1
         % window_samples Sliding window only: window length [intervals]; Tw = window_samples*Ts
         window_samples = 10
     end
@@ -213,6 +213,24 @@ classdef mfc_fhat_decoupled_dev_block < matlab.System
                 error('mfc:mimo:alphaSize', ...
                     'alpha must be %d-by-%d to match n.', obj.n, obj.n);
             end
+        end
+
+        % kernel is PRIVATE and built in setupImpl, so the base class does
+        % not carry it through the save/load of a LOCKED object that Simulink
+        % does for fast restart and array sim(). Without these it comes back
+        % empty on every run after the first.
+        function s = saveObjectImpl(obj)
+            s = saveObjectImpl@matlab.System(obj);
+            if isLocked(obj)
+                s.kernel = obj.kernel;
+            end
+        end
+
+        function loadObjectImpl(obj, s, wasLocked)
+            if wasLocked
+                obj.kernel = s.kernel;
+            end
+            loadObjectImpl@matlab.System(obj, s, wasLocked);
         end
 
         function [sz, dt, cp] = getDiscreteStateSpecificationImpl(obj, name)

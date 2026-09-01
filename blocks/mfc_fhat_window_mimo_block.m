@@ -126,6 +126,24 @@ classdef mfc_fhat_window_mimo_block < matlab.System
             end
         end
 
+        % kernel is PRIVATE and built in setupImpl, so the base class does
+        % not carry it through the save/load of a LOCKED object that Simulink
+        % does for fast restart and array sim(). Without these it comes back
+        % empty on every run after the first.
+        function s = saveObjectImpl(obj)
+            s = saveObjectImpl@matlab.System(obj);
+            if isLocked(obj)
+                s.kernel = obj.kernel;
+            end
+        end
+
+        function loadObjectImpl(obj, s, wasLocked)
+            if wasLocked
+                obj.kernel = s.kernel;
+            end
+            loadObjectImpl@matlab.System(obj, s, wasLocked);
+        end
+
         function [sz, dt, cp] = getDiscreteStateSpecificationImpl(obj, ~)
             sz = [obj.window_samples + 1, obj.n];
             dt = 'double';  cp = false;

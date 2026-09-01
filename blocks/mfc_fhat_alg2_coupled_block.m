@@ -53,15 +53,15 @@ classdef mfc_fhat_alg2_coupled_block < matlab.System
         Kp = 25
         % Kd Derivative gain, folded in as a_fold = -Kd (double pole at -p -> Kd = 2p). Do NOT also apply it externally.
         Kd = 10
+        % est_filter_window Internal num/den smoother memory [samples]
+        est_filter_window = 10
+        % est_hold_time F_hat held at zero until t exceeds this [s] (guards the near-zero denominator at startup)
+        est_hold_time = 0.1
     end
 
     properties (Nontunable)
         % Ts Sample time [s] (fixes the block's discrete rate)
         Ts = 0.01
-        % est_filter_window Internal num/den smoother memory [samples]
-        est_filter_window = 10
-        % est_hold_time F_hat held at zero until t exceeds this [s] (guards the near-zero denominator at startup)
-        est_hold_time = 0.1
     end
 
     properties (Nontunable, Logical)

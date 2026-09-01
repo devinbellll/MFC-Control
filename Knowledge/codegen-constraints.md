@@ -139,12 +139,22 @@ same way. `cfg.n` is a run-time struct field, so **both branches are compiled**
 — the same situation as the estimator dispatch, and the reason the dead branch
 still has to be valid code at either width.
 
-## 6. `est_filter_window` is Nontunable
+## 6. `est_filter_window` is Nontunable — but only where it sizes something
 
-It sizes the window buffers and the FIR taps. Making it tunable would
-mean re-sizing a discrete state at run time, which is not possible under
-codegen. `Ts` is Nontunable for the same class of reason — it fixes the block's
-sample time.
+In `mfc_siso_core`, `mfc_mimo_core` and the `mfc_fhat_window*` blocks it feeds
+`bufferLength`, so it sizes the window buffers and the FIR taps. Making it
+tunable there would mean re-sizing a discrete state at run time, which is not
+possible under codegen. `Ts` is Nontunable for the same class of reason — it
+fixes the block's sample time.
+
+The purely algebraic estimator blocks are the exception: they have no buffers,
+and `est_filter_window`/`est_hold_time` reach only `stepImpl`. Both are plain
+tunable properties there, so a GA can sweep them under fast restart instead of
+paying a recompile per candidate. `mfc_fhat_riachy2*` and
+`mfc_fhat_decoupled_dev_block` size their buffers from a separate
+`window_samples`, so they follow the algebraic rule too. Under codegen the two
+become runtime parameters rather than compile-time constants — a real change
+for a code-generating consumer of those blocks, though not for the cores.
 
 Gains (`Kp`, `Kd`, `Ki`, `alpha`, `command_filter`, `u_min`, `u_max`) *are*
 tunable, and `mfc_siso_core.stepImpl` copies them into its cached config every
