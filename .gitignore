@@ -1,0 +1,20 @@
+# macOS
+.DS_Store
+
+# Code generation / build folders
+slprj/
+sccprj/
+codegen/
+
+# Autosave files
+*.asv
+*.m~
+*.autosave
+*.slx.r*
+*.mdl.r*
+
+# Octave scratch state, written wherever octave is launched
+octave-workspace
+
+# Editor / agent local state
+.claude/
